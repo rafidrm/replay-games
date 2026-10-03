@@ -1,0 +1,15 @@
+{
+  "id": "./",
+  "name": "Two Stage · Replay Games",
+  "short_name": "Two Stage",
+  "description": "Private entry and exit practice, five minutes at a time.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b111b",
+  "theme_color": "#0b111b",
+  "icons": [
+    {"src":"./icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"./icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}

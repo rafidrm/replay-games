@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow,noarchive"><meta name="theme-color" content="#0b111b"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Two Stage"><link rel="manifest" href="./manifest.webmanifest"><link rel="icon" href="./icon-192.png"><link rel="apple-touch-icon" href="./icon-192.png"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"><title>Two Stage · Replay games</title><link rel="stylesheet" href="./style.css"></head>
+<body>
+<header><a class="brand" href="./" aria-label="Two Stage home"><span class="brand-mark">Ⅱ</span><span>REPLAY GAMES <b>Two Stage</b></span></a><div class="header-right"><span id="loading-status" role="status" hidden>Loading replay…</span><button id="update-app" class="quiet" hidden>Update ready</button><button id="library-button" class="quiet">Library</button><button id="history-button" class="quiet">Sessions</button></div></header>
+<main>
+  <section id="welcome" class="welcome" hidden>
+    <div class="intro"><h1>Two Stage</h1><p>Replay a qualifying day, five minutes at a time.</p></div>
+    <div class="start-card"><h2>Practice plan</h2>
+      <label>Signals<select id="start-preset"><option value="full">VWAP + EMA + logistic</option><option value="vwap">Price + VWAP</option><option value="price">Price only</option></select></label>
+      <label>Entry rule<select id="plan-entry"><option value="retest">VWAP retest</option><option value="retest_ema">VWAP retest + EMA alignment</option><option value="discretionary">Discretionary</option></select></label>
+      <div class="form-grid"><label>Risk / trade<select id="plan-risk"><option value="1">1% · $200</option><option value="2" selected>2% · $400</option><option value="3">3% · $600</option></select></label><label>Manual stop<select id="plan-stop"><option value="15">−15%</option><option value="25" selected>−25%</option><option value="35">−35%</option></select></label></div>
+      <p class="muted small">$20,000 paper account · 3 entries / day<br>Take some profit at +25%, +50%, +75%…</p><button id="deal" class="primary large">Random day <span>→</span></button><p id="pool" class="small muted"></p><button id="welcome-import" class="quiet wide">Import replay pack</button>
+    </div>
+  </section>
+  <section id="game" hidden>
+    <div class="session-title"><h1><span id="symbol">—</span> <span id="session-date" class="date"></span></h1><div class="clock"><span id="clock">09:30</span><small>NEW YORK · ET</small></div><div class="step-actions"><button id="finish" class="quiet">Finish day…</button><button id="next" class="primary">Next 5 min →</button></div></div>
+    <div class="progress"><div id="progress-fill"></div></div>
+    <div class="metrics"><div><span>Daily P&L</span><strong id="total">$0.00</strong></div><div><span>Realized</span><strong id="realized">$0.00</strong></div><div><span>Open P&L</span><strong id="unrealized">$0.00</strong></div><div><span>Cash</span><strong id="cash">$20,000</strong></div><div><span>Entries</span><strong id="entries">0 / 3</strong></div></div>
+    <section class="signal-focus" aria-label="Qualification signals">
+      <article id="premarket-focus" class="focus-card"></article>
+      <article id="trend-focus" class="focus-card"></article>
+      <article id="entry-focus" class="focus-card"></article>
+    </section>
+    <div class="workspace">
+      <div class="left-column">
+        <section class="panel chart-panel">
+          <div class="panel-heading"><h2>Price · 5 min</h2><span id="last-price" class="last-price">—</span></div>
+          <div class="layers"><label><input type="checkbox" data-layer="vwap">VWAP <i class="key gold"></i></label><label><input type="checkbox" data-layer="ema">EMA 8 / 21 <i class="key purple"></i></label><label><input type="checkbox" data-layer="volume">Volume</label><label><input type="checkbox" data-layer="levels">Levels</label><label><input type="checkbox" data-layer="model">Logistic</label></div>
+          <div class="chart-wrap"><svg id="chart" role="img" aria-label="Historical price chart through the replay clock"></svg><div id="chart-tip" hidden></div></div>
+          <div id="signals" class="signal-strip"></div>
+          <section id="model-panel" class="model-panel" hidden><div class="model-heading"><h2 title="Shared logistic trend probability; this does not predict call or put direction.">Logistic · trend probability</h2><span id="model-current"></span></div><svg id="model-chart" role="img" aria-label="Logistic trend probabilities through the replay clock"></svg><div id="model-status" class="small muted"></div></section>
+        </section>
+        <details class="panel gates-panel"><summary id="gate-summary">Gate details</summary><div class="gate-grid"><div><div class="panel-heading"><h2>01 · Premarket</h2><label class="detail-toggle"><input type="checkbox" data-layer="detector">Scores</label></div><div id="screens"></div></div><div><h2>02 · Intraday trend</h2><div id="gate-status"></div></div></div></details>
+        <details class="panel journal-panel"><summary id="tape-summary">Trades & notes</summary><div class="panel-heading"><button id="export" class="quiet">Export JSON ↓</button></div><div class="note-row"><input id="decision-note" placeholder="Optional note" maxlength="500" aria-label="Decision note"><button id="save-note" class="quiet">Save</button></div><div id="tape"></div></details>
+      </div>
+      <aside>
+        <section class="panel trade-panel"><div class="panel-heading"><h2 id="trade-heading">Entry</h2><span class="pill" id="position-tag">FLAT</span></div>
+          <div id="entry-form"><div class="segmented"><button id="calls" class="active">Calls</button><button id="puts">Puts</button></div><label>Expiration<select id="expiry"></select></label><label>Strike<select id="contract"></select></label><p id="coverage" class="small muted" hidden></p><div class="quote-box" id="quote-box"></div><label>Contracts<input id="quantity" type="number" value="1" min="1" max="1000" step="1"></label><div id="cost-preview" class="small"></div><button id="buy" class="primary wide">Buy at ask</button><p id="menu-scope" class="small muted" hidden></p></div>
+          <div id="profit-plan" class="profit-plan"><span>TAKE PROFIT</span><b>+25% → +50% → +75%…</b></div>
+          <div id="position-form" hidden><h3 id="position-name"></h3><section id="profit-panel" class="profit-panel" aria-label="Take profit targets"><div id="profit-flags" class="profit-flags"></div><p id="profit-caption" role="status" aria-live="polite"></p><button id="take-profit" class="secondary wide">Take profit</button><small id="profit-size"></small></section><div id="position-detail"></div><div id="stop-alert" class="notice" hidden></div><button id="exit-all" class="primary wide">Exit all</button><div class="runner-control"><label>Keep runners<input id="runners" type="number" value="1" min="1" step="1"></label><button id="exit-partial" class="secondary wide">Sell the rest</button></div><label>Sell quantity<input id="sell-quantity" type="number" value="1" min="1" step="1"></label><button id="sell-custom" class="quiet wide">Sell quantity</button></div>
+        </section>
+        <details class="panel discipline-panel"><summary>Plan & checks</summary><p id="commitment"></p><div id="checks"></div></details>
+      </aside>
+    </div>
+    <section id="debrief" class="panel debrief" hidden></section>
+  </section>
+  <section id="history" class="panel history" hidden><div class="panel-heading"><h2>Sessions</h2><button id="close-history" class="quiet">Close ×</button></div><div id="history-content"></div></section>
+  <footer>Paper replay <span>Buy ask · sell bid · 100 shares / contract · no fees</span></footer>
+</main>
+<nav id="mobile-dock" aria-label="Replay controls" hidden><button id="dock-chart" class="quiet">Chart</button><button id="dock-trade" class="quiet">Entry</button><button id="dock-next" class="primary"><small id="dock-clock">09:30</small>Next 5 min →</button></nav>
+<div id="toast" role="status" hidden></div>
+<dialog id="finish-dialog"><h2>Finish this day?</h2><p>Reveal the remaining candles and close at the 16:00 bid. Unavailable quotes or depth leave P&L unresolved.</p><div class="dialog-actions"><button id="cancel-finish" class="quiet">Keep playing</button><button id="confirm-finish" class="primary">Finish & review</button></div></dialog>
+<dialog id="library-dialog"><div class="panel-heading"><h2>Your library</h2><button id="close-library" class="quiet" aria-label="Close library">Close ×</button></div><p id="library-status">Your data stays on this device.</p><label class="file-control">Import replay pack<input id="pack-file" type="file" accept=".gz,.replay,.json,.jsonl,application/gzip,application/json"></label><p id="import-status" role="status" aria-live="polite"></p><div class="library-backup"><h3>Practice history</h3><button id="backup-progress" class="quiet wide">Back up progress</button><label class="file-control">Restore progress<input id="restore-file" type="file" accept=".json,application/json"></label><p id="restore-status" role="status"></p></div><p class="small muted">Keep your replay pack and a progress backup in Files. Clearing browser data removes this device’s saves. Imports stay here and are never uploaded.</p><p class="small muted">On iPhone: open in Safari → Share → Add to Home Screen. Import your pack in the Home Screen app.</p><p id="offline-status" class="small muted"></p></dialog>
+<script type="module" src="./app.js"></script>
+</body></html>

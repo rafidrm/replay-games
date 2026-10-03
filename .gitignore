@@ -1,0 +1,6 @@
+*.replay*
+*.gz
+private/
+sessions/
+verification/
+.DS_Store
