@@ -44,7 +44,7 @@ function render(){
   $('#symbol').textContent=state.symbol;$('#session-date').textContent=new Date(state.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})+(state.repeated?' · repeated case':'');
   $('#clock').textContent=time(state.minute);$('#progress-fill').style.width=`${100*state.minute/390}%`;
   colored($('#total'),state.total);colored($('#realized'),state.realized);colored($('#unrealized'),state.unrealized);$('#cash').textContent=money(state.cash);$('#entries').textContent=`${state.entries} / ${state.plan.trades}`;
-  $('#next').disabled=state.finished;$('#dock-next').disabled=state.finished;$('#finish').disabled=state.finished;$('#dock-clock').textContent=time(state.minute);$('#dock-trade').textContent=state.position?'Exit / runners':'Entry';
+  $('#next').disabled=state.finished;$('#dock-next').disabled=false;$('#dock-next-label').textContent=state.finished?'Next day →':'Next 5 min →';$('#finish').disabled=state.finished;$('#dock-clock').textContent=time(state.minute);$('#dock-trade').textContent=state.finished?'Review':state.position?'Exit / runners':'Entry';
   $$('[data-layer]').forEach(el=>{el.checked=!!state.layers[el.dataset.layer];el.disabled=state.finished});
   $('#last-price').textContent=(state.minute===0?'Open ':'')+money(state.spot);
   drawChart();drawModel();renderSignals();renderGates();renderFocus();renderContracts();renderPosition();renderDiscipline();renderTape();renderDebrief();
@@ -72,6 +72,11 @@ function renderFocus(){
   $('#trend-focus').innerHTML=`<div class="focus-label">02 · INTRADAY TREND</div><div class="focus-value"><strong>${state.probability==null?(state.gate_passed?'Passed':'Waiting'):num(state.probability*100,1)+'%'}</strong><span class="focus-status ${state.gate_passed?'yes':'wait'}">${state.gate_passed?'PASSED':'WAIT'}</span></div><div class="focus-caption">${state.gate_passed?`Activated ${time(state.gate_minute)}`:state.minute===0?'First update 09:35':'Needs ≥50%'}${state.probability_minute!=null&&state.minute>state.probability_minute?` · last ${time(state.probability_minute)}`:''}</div>`;
   const direction=state.position?.right||side,setup=entrySetup(state,direction);
   $('#entry-focus').classList.remove('profit-due','profit-missed');
+  if(state.finished){
+    $('#entry-focus').classList.toggle('ready',state.score===100);
+    $('#entry-focus').innerHTML=`<div class="focus-label">03 · DAY COMPLETE</div><div class="focus-value"><strong>${state.score==null?'—':state.score+'%'}</strong><span>PLAN CHECKS</span></div><div class="focus-caption">${state.checks.filter(c=>c.passed).length} / ${state.checks.length} checks passed</div>`;
+    return;
+  }
   if(state.position&&state.profit_version){
     const p=state.position,profit=profitSetup(p),due=profit.due.length>0,missed=profit.missed.length>0;
     $('#entry-focus').classList.toggle('ready',p.premium_return>0&&!due&&!missed);
@@ -215,8 +220,8 @@ $('#pack-file').onchange=()=>{const file=$('#pack-file').files[0];if(!file)retur
 });};
 $('#backup-progress').onclick=()=>task(async()=>downloadJSON(await backupProgress(),'two-stage-progress-'+new Date().toISOString().slice(0,10)+'.json'));
 $('#restore-file').onchange=()=>{const file=$('#restore-file').files[0];if(!file)return;task(async()=>{try{const result=await restoreProgress(file);await loadHistory();$('#restore-status').textContent=`${result.added} rounds restored · ${result.kept} existing rounds kept`;toast('Progress restored. Open Sessions to resume a round.');}catch(error){$('#restore-status').textContent=error.message;throw error;}finally{$('#restore-file').value='';}})};
-$('#dock-next').onclick=()=>action('advance');
-$('#dock-trade').onclick=()=>$('.trade-panel').scrollIntoView({behavior:'smooth',block:'start'});
+$('#dock-next').onclick=()=>state.finished?$('#another').click():action('advance');
+$('#dock-trade').onclick=()=>(state.finished?$('#debrief'):$('.trade-panel')).scrollIntoView({behavior:'smooth',block:'start'});
 $('#dock-chart').onclick=()=>$('.signal-focus').scrollIntoView({behavior:'smooth',block:'start'});
 if('serviceWorker' in navigator){
   let reloadForUpdate=false;
