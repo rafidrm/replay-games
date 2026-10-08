@@ -1,6 +1,7 @@
 import {localAPI,importPack,backupProgress,restoreProgress,lastSession,sessionKey} from './storage.mjs';
 import {entrySetup,profitSetup} from './signals.mjs';
 import {moneyness,nearStrikes,orderContracts} from './contracts.mjs';
+import {entrySizing} from './policies.mjs';
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const money = n => n == null ? 'Unknown' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
@@ -27,7 +28,9 @@ $('#calls').onclick=()=>{side='CALL';selected='';manualSelection='';renderContra
 $('#puts').onclick=()=>{side='PUT';selected='';manualSelection='';renderContracts();renderFocus()};
 $('#expiry').onchange=()=>{selected='';manualSelection='';renderContracts(true)};
 $('#contract').onchange=()=>{selected=$('#contract').value;manualSelection=selected;renderQuote()};
-$('#quantity').oninput=renderQuote;
+const quantityKey=()=>sessionKey+':quantity:'+state.id;
+$('#quantity').oninput=()=>{if(state?.policy_cards)localStorage.setItem(quantityKey(),$('#quantity').value);renderQuote();};
+$('#use-policy-size').onclick=()=>{localStorage.removeItem(quantityKey());renderQuote();};
 $('#buy').onclick=()=>action('buy',{contract:selected,qty:Number($('#quantity').value)});
 $('#exit-all').onclick=()=>action('sell',{qty:state.position.qty});
 $('#exit-partial').onclick=()=>{const runners=Number($('#runners').value);if(!Number.isInteger(runners)||runners<1||runners>=state.position.qty)return toast('Keep at least one runner and sell at least one whole contract.');action('sell',{qty:state.position.qty-runners})};
@@ -126,7 +129,14 @@ function renderContracts(keepExpiry=false){
 }
 function renderQuote(){
   if(!state)return;
-  const c=state.contracts.find(c=>c.id===selected),q=c?.quote,qty=Number($('#quantity').value);
+  const c=state.contracts.find(c=>c.id===selected),q=c?.quote;
+  const sized=state.policy_cards&&!state.position,manual=sized?localStorage.getItem(quantityKey()):null;
+  const suggestion=sized?entrySizing(state.setup,q,state.cash):null;
+  if(sized){if(manual!==null)$('#quantity').value=manual;else $('#quantity').value=suggestion?.recommended??'';}
+  const qty=Number($('#quantity').value),split=sized?entrySizing(state.setup,q,state.cash,qty):null;
+  $('#use-policy-size').hidden=!sized||manual===null;$('#use-policy-size').disabled=!suggestion;$('#use-policy-size').textContent='Use policy size'+(suggestion?' · '+suggestion.recommended:'');
+  $('#sizing-preview').hidden=!sized;
+  $('#sizing-preview').textContent=split?`${manual!==null?'Manual size · ':''}Policy size ${split.recommended}. `+(split.first?`Sell ${split.first} at +${state.setup.exit.first}%${split.runner?`; keep ${split.runner} for +${state.setup.exit.second}%`:' · full exit'}.`:'No contracts within the policy budget.'):'Sizing waits for a current quote.';
   $('#quote-box').innerHTML=q?`<div><span>BID</span><b>${money(q.bid)}</b><small>${state.setup?'Observed bid':c.bid_available+' available'}</small></div><div><span>ASK</span><b>${money(q.ask)}</b><small>${state.setup?'Observed ask':c.ask_available+' available'}</small></div><div class="quote-warning">Spread ${num(100*(q.ask-q.bid)/(state.setup?(q.ask+q.bid)/2:q.ask),1)}% · ${time(state.minute)}</div>`:`<div class="quote-warning">No current quote.</div>`;
   const cost=q?q.ask*qty*100:null,risk=cost*state.plan.stop/100,budget=20000*state.plan.risk/100;
   $('#cost-preview').innerHTML=q&&state.setup?`Premium <b class="${cost>state.setup.budget||qty>state.setup.max_contracts?'negative':''}">${money(cost)}</b> / ${money(state.setup.budget)} cap<br>Max ${state.setup.max_contracts} contracts · stop risk ${money(risk)}`:q?`Premium <b>${money(cost)}</b><br>Stop risk <b class="${risk>budget?'negative':''}">${money(risk)}</b> / ${money(budget)}`:'No current fill available.';

@@ -28,6 +28,14 @@ export function stopRule(position,setup,minute){
   return {active:minute>=activation,activation,price:p.entry*(breakeven?1:1-x.stop/100),breakeven};
 }
 
+export function entrySizing(setup,quote,cash,quantity=null){
+  if(!quote||!Number.isFinite(quote.ask)||quote.ask<=0)return null;
+  const recommended=Math.min(setup.max_contracts,Math.floor(Math.min(setup.budget,cash)/(100*quote.ask)));
+  const n=quantity??recommended,x=setup.exit;
+  const first=Number.isInteger(n)&&n>0?(x.family==='full'||n===1?n:Math.min(n-1,Math.max(1,Math.floor(n*x.fraction+.5)))):0;
+  return {recommended,first,runner:first?n-first:0};
+}
+
 const clock=m=>`${String(Math.floor((570+m)/60)).padStart(2,'0')}:${String((570+m)%60).padStart(2,'0')}`;
 const price=p=>Number.isFinite(p)?'$'+p.toFixed(2):'unavailable';
 export function policyCard(setup,signal,game){
