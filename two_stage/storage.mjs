@@ -76,6 +76,7 @@ export async function importPack(file,progress=()=>{}){
       if(!manifest){manifest=await validateManifest(JSON.parse(line));progress(0,manifest.records.length);continue;}
       const expected=manifest.records[index];if(!expected||await digest(line)!==expected.sha256)throw Error('Replay checksum mismatch. Import was stopped; your previous library is unchanged.');
       const day=validateDay(JSON.parse(line));if((day.format_version===2)!==(manifest.version===2))throw Error('Replay version mismatch.');if(day.key!==expected.key||received.has(day.key))throw Error('Replay record identity mismatch.');
+      if(Boolean(day.policy_signals)!==Boolean(manifest.setups?.some(s=>s.entry.kind==='union')))throw Error('Replay policy inputs do not match the setup roster.');
       await put('days',{id:manifest.id+':'+day.key,data:day});received.add(day.key);index++;progress(index,manifest.records.length);
     }
     if(!manifest||index!==manifest.records.length)throw Error('Incomplete replay pack. Your previous library is unchanged.');

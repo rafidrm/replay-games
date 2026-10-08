@@ -1,7 +1,7 @@
-const VERSION='two-stage-a3ff420fea63fa5a';
+const VERSION='two-stage-31037536b6cd5856';
 const PREFIX='two-stage:'+self.registration.scope+':';
 const CACHE=PREFIX+VERSION;
-const ASSETS=['./','./index.html','./style.css','./app.js','./engine.mjs','./storage.mjs','./stage2.mjs','./reclaim.mjs','./pack.mjs','./signals.mjs','./contracts.mjs','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
+const ASSETS=['./','./index.html','./style.css','./app.js','./engine.mjs','./storage.mjs','./stage2.mjs','./reclaim.mjs','./policies.mjs','./pack.mjs','./signals.mjs','./contracts.mjs','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 const urls=new Set(ASSETS.map(p=>new URL(p,self.registration.scope).href));
 // Pages sets HTTP cache lifetimes independently of our release. Populate a new
 // release from fresh responses so a waiting worker cannot pin an old app bundle.

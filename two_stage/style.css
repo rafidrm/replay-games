@@ -51,3 +51,19 @@ html{scroll-padding-top:18px}button,input,select{touch-action:manipulation}butto
 #setup-name{display:block;margin-top:7px;color:var(--muted,#8396ac);font-size:11px;font-weight:500}#setup-name[hidden]{display:none}#setup-brief{line-height:1.5}#pack-control{margin-bottom:16px}
 
 .benchmark-review{margin-top:24px;border-top:1px solid var(--border);padding-top:14px}.benchmark-review h3{margin:4px 0 10px;font-size:15px}.benchmark-row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:12px;line-height:1.5}.benchmark-row small{display:block;color:var(--muted);margin-top:3px}.benchmark-row b{white-space:nowrap;font-variant-numeric:tabular-nums}.benchmark-review details{margin-top:14px;font-size:12px}.benchmark-path{padding:12px 0}.benchmark-path p{margin:4px 0}
+
+/* Four-policy packs use the candles as the main workspace. */
+.watch-context{font-size:11px;color:var(--muted);margin:0 0 12px;line-height:1.5}
+.policy-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:8px 0 12px;border-top:1px solid var(--border)}
+.policy-card{min-width:0;padding:11px 12px;border:1px solid var(--border);border-radius:5px;background:#0e1723}
+.policy-card.selected{border-color:#42655a}.policy-title{display:flex;justify-content:space-between;gap:6px;font-size:11px;line-height:1.5}.policy-title b{font-weight:500;color:#b6c5d4}.policy-title span{font-size:8px;letter-spacing:1px;color:var(--green)}
+.policy-status{display:block;font-size:14px;font-weight:600;margin-top:5px;line-height:1.4}.policy-card p{font-size:11px;line-height:1.5;color:var(--muted);margin:5px 0 0}
+.policy-card.ready .policy-status,.policy-card.position .policy-status{color:var(--green)}
+.policy-card.alert .policy-status,.policy-card.target .policy-status,.policy-card.exit_queued .policy-status{color:var(--gold)}
+.policy-card.stop .policy-status,.policy-card.veto .policy-status,.policy-card.exit .policy-status{color:var(--red)}
+.policy-card.not_applicable .policy-status,.policy-card.cash .policy-status,.policy-card.missed .policy-status{color:var(--muted)}
+.current-events{border-top:1px solid var(--border);padding:8px 0;font-size:10px;line-height:1.6;color:var(--muted)}.current-events div{display:flex;gap:9px}.current-events time{font-variant-numeric:tabular-nums;flex-shrink:0;color:#b6c5d4}
+.roster-game .chart-wrap{height:365px}.roster-game .metrics{display:flex;gap:24px;margin-bottom:14px}.roster-game .metrics>div{padding-left:0;border:0}.roster-game .metrics>div:nth-child(2),.roster-game .metrics>div:nth-child(4){display:none}.roster-game .metrics strong{font-size:19px}.roster-game .metrics span{font-size:10px}.roster-game #setup-name{display:none}.roster-game .signal-strip{display:none}
+@media(min-width:1100px){.policy-cards{grid-template-columns:repeat(4,minmax(0,1fr))}.policy-card p{font-size:10px}}
+@media(min-width:801px) and (max-height:850px){.roster-game .chart-wrap{height:230px}}
+@media(max-width:800px){.roster-game .chart-wrap{height:245px}.roster-game .watch-context{font-size:10px;margin-bottom:9px}.roster-game .metrics{margin-bottom:10px;gap:24px}.roster-game .metrics strong{font-size:17px}.roster-game .metrics span{font-size:9px}.policy-cards{gap:6px;padding-top:7px}.policy-card{padding:8px}.policy-title{font-size:10px}.policy-status{font-size:12px;margin-top:4px}.policy-card p{font-size:10px;line-height:1.4;margin-top:4px}.current-events{font-size:10px}.roster-game .session-title h1{font-size:25px}}

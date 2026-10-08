@@ -16,6 +16,7 @@
   <section id="game" hidden>
     <div class="session-title"><h1><span id="symbol">—</span> <span id="session-date" class="date"></span><small id="setup-name" hidden></small></h1><div class="clock"><span id="clock">09:30</span><small>NEW YORK · ET</small></div><div class="step-actions"><button id="finish" class="quiet">Finish day…</button><button id="next" class="primary">Next 5 min →</button></div></div>
     <div class="progress"><div id="progress-fill"></div></div>
+    <div id="watch-context" class="watch-context" hidden></div>
     <div class="metrics"><div><span>Daily P&L</span><strong id="total">$0.00</strong></div><div><span>Realized</span><strong id="realized">$0.00</strong></div><div><span>Open P&L</span><strong id="unrealized">$0.00</strong></div><div><span>Cash</span><strong id="cash">$20,000</strong></div><div><span>Entries</span><strong id="entries">0 / 3</strong></div></div>
     <section class="signal-focus" aria-label="Qualification signals">
       <article id="premarket-focus" class="focus-card"></article>
@@ -28,6 +29,8 @@
           <div class="panel-heading"><h2>Price · 5 min</h2><span id="last-price" class="last-price">—</span></div>
           <div class="layers"><label><input type="checkbox" data-layer="vwap">VWAP <i class="key gold"></i></label><label><input type="checkbox" data-layer="ema"><span id="ema-label">EMA 8 / 21</span> <i class="key purple"></i></label><label><input type="checkbox" data-layer="volume">Volume</label><label><input type="checkbox" data-layer="levels">Levels</label><label><input type="checkbox" data-layer="model">Logistic</label></div>
           <div class="chart-wrap"><svg id="chart" role="img" aria-label="Historical price chart through the replay clock"></svg><div id="chart-tip" hidden></div></div>
+          <section id="policy-cards" class="policy-cards" aria-label="Four setup signals" hidden></section>
+          <div id="current-events" class="current-events" aria-label="Recent signals" hidden></div>
           <div id="signals" class="signal-strip"></div>
           <section id="model-panel" class="model-panel" hidden><div class="model-heading"><h2 title="Shared logistic trend probability; this does not predict call or put direction.">Logistic · trend probability</h2><span id="model-current"></span></div><svg id="model-chart" role="img" aria-label="Logistic trend probabilities through the replay clock"></svg><div id="model-status" class="small muted"></div></section>
         </section>

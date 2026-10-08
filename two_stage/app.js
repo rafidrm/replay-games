@@ -40,6 +40,7 @@ $('#close-history').onclick=()=>$('#history').hidden=true;
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!['INPUT','SELECT','TEXTAREA','BUTTON'].includes(document.activeElement.tagName)&&!$('#finish-dialog').open&&state&&!state.finished){e.preventDefault();action('advance')}});
 
 function render(){
+  document.body.classList.toggle('roster-game',!!state.policy_cards);
   $('#welcome').hidden=true;$('#game').hidden=false;$('#mobile-dock').hidden=false;
   $('#symbol').textContent=state.symbol;$('#session-date').textContent=new Date(state.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})+(state.repeated?' · repeated case':'');
   $('#clock').textContent=time(state.minute);$('#progress-fill').style.width=`${100*state.minute/(state.deadline||390)}%`;
@@ -47,11 +48,12 @@ function render(){
   $('#next').disabled=state.finished;$('#dock-next').disabled=false;$('#dock-next-label').textContent=state.finished?'Next day →':state.next_minute?'Next → '+time(state.next_minute):'Next 5 min →';$('#finish').disabled=state.finished;$('#dock-clock').textContent=time(state.minute);$('#dock-trade').textContent=state.finished?'Review':state.position?'Exit / runners':'Entry';
   $$('[data-layer]').forEach(el=>{el.checked=!!state.layers[el.dataset.layer];el.disabled=state.finished});
   $('#last-price').textContent=(state.minute===0?'Open ':'')+money(state.spot);
-  $('#next').textContent=state.next_minute?'Next → '+time(state.next_minute):'Next 5 min →';
+  $('#next').textContent=state.policy_cards?'Step →':state.next_minute?'Next → '+time(state.next_minute):'Next 5 min →';
+  if(state.policy_cards&&!state.finished)$('#dock-next-label').textContent='Step →';
   $('#setup-name').hidden=!state.setup;$('#setup-name').textContent=state.setup?.name||'';$('#ema-label').textContent=`EMA ${state.ema_fast||8} / 21`;
   $('[data-layer="model"]').closest('label').hidden=!!state.setup;
   $('#finish-description').textContent=state.setup?`Reveal the remaining candles and close at the ${time(state.deadline)} bid. Missing prices leave P&L unresolved.`:'Reveal the remaining candles and close at the 16:00 bid. Unavailable quotes or depth leave P&L unresolved.';
-  drawChart();drawModel();renderSignals();renderGates();renderFocus();renderContracts();renderPosition();renderDiscipline();renderTape();renderDebrief();
+  renderPolicyCards();drawChart();drawModel();renderSignals();renderGates();renderFocus();renderContracts();renderPosition();renderDiscipline();renderTape();renderDebrief();
   $('#save-note').disabled=state.finished;$('#decision-note').disabled=state.finished;
 }
 
@@ -131,6 +133,7 @@ function renderQuote(){
   $('#buy').disabled=state.finished||!!state.position||!q||!Number.isInteger(qty)||qty<1||qty>1000||cost>state.cash||qty>c.ask_available;
   $('#buy').textContent=q?`Buy ${Number.isInteger(qty)?qty:'…'} at ${money(q.ask)}`:'Buy at ask';
   if(state.setup_signal?.status==='veto'&&q)$('#buy').textContent='Off-plan buy · entry vetoed';
+  else if(state.policy_cards&&q&&(state.setup_signal.status!=='ready'||side!==state.watchlist.side||state.entries))$('#buy').textContent='Off-plan buy · '+money(q.ask);
 }
 function renderPosition(){
   const p=state.position;$('#entry-form').hidden=!!p;$('#position-form').hidden=!p;$('#position-tag').textContent=p?(p.runner?'RUNNERS':'OPEN'):'FLAT';$('#trade-heading').textContent=p?'Position':'Entry';
@@ -147,7 +150,9 @@ function renderPosition(){
   $('#profit-size').textContent=profit.quantity===p.qty?'Full exit':profit.quantity?`Keeps ${p.qty-profit.quantity} runner${p.qty-profit.quantity===1?'':'s'}${state.setup?' · planned split':' · half remaining, limited by bid size'}`:state.setup?'Waiting for a profit target':'No bid size available';
   $('#position-name').textContent=`${state.symbol} ${num(p.strike)} ${p.right.toLowerCase()}`;
   $('#position-detail').innerHTML=[['Expiration',p.expiration],['Contracts remaining',`${p.qty} of ${p.initial_qty}`],['Entry ask',`${money(p.entry)} · ${time(p.entry_minute)}`],['Current bid',p.quote?money(p.quote.bid):'Unknown'],['Premium return',p.premium_return==null?'Unknown':num(100*p.premium_return,1)+'%'],['Booked on this position',money(p.realized)],[state.setup?'Execution':'Available bid size',state.setup?'Observed bid/ask':p.bid_available]].map(([a,b])=>`<div class="detail-row"><span>${a}</span><b>${b}</b></div>`).join('');
+  if(state.stop_rule)$('#position-detail').insertAdjacentHTML('beforeend',`<div class="detail-row"><span>${state.stop_rule.breakeven?'Runner stop':'Premium stop'}</span><b>${money(state.stop_rule.price)} · ${state.stop_rule.active?'active':'from '+time(state.stop_rule.activation)}</b></div>`);
   $('#stop-alert').hidden=p.stop_alert==null;$('#stop-alert').textContent=`Stop alert at ${time(p.stop_alert||0)}. Your −${state.plan.stop}% premium rule was breached. This is a manual exit; the game will not protect the position for you.`;
+  if(state.stop_rule&&p.stop_alert!=null)$('#stop-alert').textContent=`${state.stop_rule.breakeven?'Breakeven runner':'Premium'} stop hit at ${time(p.stop_alert)}. Sell remaining contracts.`;
   const t=state.trend_exit;$('#trend-exit-alert').hidden=!t||t.status==='watching';
   $('#trend-exit-alert').textContent=t&&t.status!=='watching'?`Own-VWAP exit ${time(t.execution_minute)} · ${t.priority==='target'?'original profit target takes priority':t.priority==='stop'?'original stop takes priority':t.priority==='missing_quote'?'no usable bid':t.status==='alert'?'prepare to sell all remaining contracts next minute':t.status==='due'?'sell all remaining contracts now':'exit time passed'}.`:'';
   $('#exit-all').disabled=state.finished||p.bid_available<p.qty;$('#exit-partial').disabled=state.finished||p.qty<2||p.bid_available<1;$('#sell-custom').disabled=state.finished||p.bid_available<1;
@@ -161,7 +166,7 @@ function renderDiscipline(){
   $('#checks').innerHTML=state.checks.slice(-6).map(c=>`<div class="check ${c.passed?'':'failed'}"><i>${c.passed?'✓':'!'}</i><span>${escape(c.name)} · ${time(c.minute)}</span></div>`).join('')||'';
 }
 function renderTape(){
-  const events=state.events.filter(e=>['buy','partial','close','note','stop_alert','unknown','gate','profit_target','profit_taken','profit_missed','setup','vwap_unavailable','trend_signal','trend_exit','trend_missed'].includes(e.kind)).slice().reverse();
+  const events=state.events.filter(e=>['buy','partial','close','note','stop_alert','unknown','gate','profit_target','profit_taken','profit_missed','setup','policy','vwap_unavailable','trend_signal','trend_exit','trend_missed'].includes(e.kind)).slice().reverse();
   $('#tape-summary').textContent=`Trades & notes · ${state.fills.length} fills`;
   $('#tape').innerHTML=events.map(e=>`<div class="tape-row"><time>${time(e.minute)}</time><span class="tape-kind">${escape(e.kind.replace('_',' '))}</span><div>${escape(e.note)}${e.price?`<small>${e.qty} × ${money(e.price)}${e.pnl!==undefined?' · '+money(e.pnl):''}</small>`:''}</div></div>`).join('')||'<p class="empty">No trades yet.</p>';
 }
@@ -207,7 +212,7 @@ function drawChart(){
   if(!values.length){svg.innerHTML=`<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#8396ac" font-size="12">${state.minute===0?'First 5-minute candle at 09:35':'No complete candles yet'}</text>`;svg.onpointermove=null;$('#chart-tip').hidden=true;return}
   values.push(...Object.values(state.levels).filter(v=>v!=null));
   const lo=Math.min(...values),hi=Math.max(...values),pad=Math.max((hi-lo)*.13,lo*.001),min=lo-pad,max=hi+pad;
-  const slots=Math.max(28,bars.length+3),pw=W-left-right,dx=pw/slots,x=m=>left+(m/5-.5)*dx,y=p=>top+(max-p)/(max-min)*(priceBottom-top),cw=Math.max(2,Math.min(11,dx*.63));
+  const slots=Math.max(state.policy_cards?12:28,bars.length+3),pw=W-left-right,dx=pw/slots,x=m=>left+(m/5-.5)*dx,y=p=>top+(max-p)/(max-min)*(priceBottom-top),cw=Math.max(2,Math.min(11,dx*.63));
   let out=`<defs><clipPath id="plot-clip"><rect x="${left}" y="${top}" width="${pw}" height="${priceBottom-top}"/></clipPath></defs>`;
   for(let i=0;i<5;i++){let p=min+(max-min)*i/4,yy=y(p);out+=`<line x1="${left}" x2="${W-right+4}" y1="${yy}" y2="${yy}" stroke="#253246" stroke-dasharray="2 5"/><text x="${W-right+11}" y="${yy+3}" fill="#7f93aa" font-size="9" font-family="monospace">${p.toFixed(2)}</text>`}
   const step=W<420?(slots>50?18:12):(slots>50?12:6);
@@ -217,6 +222,14 @@ function drawChart(){
   for(const [key,color] of [['vwap','#eac575'],['ema8','#b298ef'],['ema21','#6ca9f6']]){let path='',gap=true;for(const b of bars){if(b[key]==null){gap=true;continue}path+=`${gap?'M':'L'}${x(b.minute)},${y(b[key])} `;gap=false}if(path)out+=`<path d="${path}" fill="none" stroke="${color}" stroke-width="1.5" opacity=".9"/>`}
   for(const b of valid){const color=b.close>=b.open?'#65d9b0':'#ed8191';out+=`<line x1="${x(b.minute)}" x2="${x(b.minute)}" y1="${y(b.high)}" y2="${y(b.low)}" stroke="${color}"/><rect x="${x(b.minute)-cw/2}" y="${Math.min(y(b.open),y(b.close))}" width="${cw}" height="${Math.max(1,Math.abs(y(b.open)-y(b.close)))}" fill="${color}"/>`}
   for(const f of state.fills){const b=bars.findLast(b=>b.minute<=f.minute);if(b?.close!=null){const xx=x(f.minute),yy=y(b.close)+(f.side==='BUY'?13:-13);out+=`<circle cx="${xx}" cy="${yy}" r="6" fill="${f.side==='BUY'?'#65e4b5':'#eac575'}"/><text x="${xx}" y="${yy+2.5}" text-anchor="middle" fill="#09251d" font-size="7" font-weight="bold">${f.side==='BUY'?'B':'S'}</text>`}}
+  if(state.policy_cards){
+    const names={union_vwap_runner:'U',stock_reclaim_exit_vwap_5m_2:'R',qqq_premium_pm_veto:'Q',fixed10_budget:'10'};
+    for(const e of state.events.filter(e=>e.kind==='policy'&&['alert','ready','veto'].includes(e.status))){
+      const b=bars.findLast(b=>b.minute<=e.minute);if(!b?.close)continue;
+      const xx=x(e.minute),yy=top+12+(Object.keys(names).indexOf(e.policy_id)%2)*15,color=e.status==='veto'?'#ed8191':e.policy_id===state.setup_id?'#65e4b5':'#8396ac';
+      out+=`<line x1="${xx}" x2="${xx}" y1="${yy+4}" y2="${y(b.close)}" stroke="${color}" stroke-dasharray="2 4" opacity=".4"/><text x="${xx}" y="${yy}" text-anchor="middle" fill="${color}" font-size="9"><title>${escape(time(e.minute)+' · '+e.note)}</title>${names[e.policy_id]}${e.status==='veto'?'×':e.status==='ready'?'↑':'·'}</text>`;
+    }
+  }
   out+='</g>';
   if(vol){const maxv=Math.max(1,...valid.map(b=>b.volume||0));for(const b of valid){const h=(b.volume||0)/maxv*(vol-10);out+=`<rect x="${x(b.minute)-cw/2}" y="${H-bottom-h}" width="${cw}" height="${h}" fill="${b.close>=b.open?'#294e47':'#543641'}"/>`}}
   const edge=x(state.minute)+dx/2;out+=`<line x1="${edge}" x2="${edge}" y1="${top}" y2="${H-bottom}" stroke="#526476" stroke-dasharray="3 5"/>`;
@@ -252,7 +265,7 @@ $('#backup-progress').onclick=()=>task(async()=>downloadJSON(await backupProgres
 $('#restore-file').onchange=()=>{const file=$('#restore-file').files[0];if(!file)return;task(async()=>{try{const result=await restoreProgress(file);await loadHistory();$('#restore-status').textContent=`${result.added} rounds restored · ${result.kept} existing rounds kept`;toast('Progress restored. Open Sessions to resume a round.');}catch(error){$('#restore-status').textContent=error.message;throw error;}finally{$('#restore-file').value='';}})};
 $('#dock-next').onclick=()=>state.finished?$('#another').click():action('advance');
 $('#dock-trade').onclick=()=>(state.finished?$('#debrief'):$('.trade-panel')).scrollIntoView({behavior:'smooth',block:'start'});
-$('#dock-chart').onclick=()=>$('.signal-focus').scrollIntoView({behavior:'smooth',block:'start'});
+$('#dock-chart').onclick=()=>(state.policy_cards?$('.chart-panel'):$('.signal-focus')).scrollIntoView({behavior:'smooth',block:'start'});
 if('serviceWorker' in navigator){
   let reloadForUpdate=false;
   navigator.serviceWorker.register('./sw.js').then(reg=>{
@@ -267,7 +280,7 @@ function targetText(setup){const x=setup.exit;return x.family==='full'?`All at +
 function renderLibrary(){
   const old=$('#setup-select').value,pack=library.pack,modern=pack?.version===2;
   $('#pack-control').hidden=library.packs.length<2;
-  $('#pack-select').innerHTML=library.packs.map(p=>`<option value="${p.id}">${escape(p.name)}</option>`).join('');$('#pack-select').value=pack?.id||'';
+  $('#pack-select').innerHTML=library.packs.map(p=>`<option value="${p.id}">${escape(p.name)}${p.name.startsWith('Four setups')?'':' · legacy / reference'}</option>`).join('');$('#pack-select').value=pack?.id||'';
   $('#setup-control').hidden=!modern;$('#setup-brief').hidden=!modern;$('#legacy-entry').hidden=modern;$('#legacy-risk').hidden=modern;
   $('#setup-select').innerHTML=modern?pack.setups.map(s=>`<option value="${s.id}">${escape(s.name)}</option>`).join(''):'';
   if(modern)$('#setup-select').value=pack.setups.some(s=>s.id===old)?old:pack.default_setup;
@@ -277,6 +290,16 @@ function renderSetupPlan(){
   const setup=library?.pack?.setups?.find(s=>s.id===$('#setup-select').value);
   $('#setup-brief').textContent=setup?setup.description:'';
   $('#start-rules').textContent=setup?`${money(setup.budget)} cap · max ${setup.max_contracts} contracts · one entry. ${targetText(setup)}. −${setup.exit.stop}% stop after ${Math.max(1,setup.exit.grace)}m. Close ${time(setup.deadline)}.`:'$20,000 paper account · 3 entries / day. Take some profit at +25%, +50%, +75%…';
+}
+function renderPolicyCards(){
+  const cards=state.policy_cards;
+  $('#policy-cards').hidden=!cards;$('#current-events').hidden=!cards;$('#watch-context').hidden=!cards;
+  $('.signal-focus').hidden=!!cards;
+  if(!cards)return;
+  $('#watch-context').textContent=`09:00 watchlist · #${state.watchlist.rank} of 3 · ${state.watchlist.side} · practice: ${state.setup.name}`;
+  $('#policy-cards').innerHTML=cards.map(c=>`<article class="policy-card ${c.selected?'selected ':''}${escape(c.status)}" aria-label="${escape(c.name)}"><div class="policy-title"><b>${escape(c.name)}</b>${c.selected?'<span>YOU</span>':''}</div><strong class="policy-status">${escape(c.label)}</strong><p>${escape(c.detail)}</p></article>`).join('');
+  const events=state.events.filter(e=>['policy','buy','partial','close','profit_target','stop_alert','trend_signal','unknown'].includes(e.kind)).slice(-2);
+  $('#current-events').innerHTML=events.map(e=>`<div><time>${time(e.minute)}</time><span>${escape(e.kind==='policy'?e.note.split('. ')[0]:e.note)}</span></div>`).join('')||'<span>Step up to five minutes. Entry and exit signals pause the clock.</span>';
 }
 function renderStageCards(){
   const w=state.watchlist,s=state.setup_signal,e=state.setup.entry;

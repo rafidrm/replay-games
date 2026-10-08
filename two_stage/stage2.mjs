@@ -1,9 +1,10 @@
 import {Day,Game,DEFAULT_LAYERS} from './engine.mjs';
 import {entryVeto,exitSignal,exitPriority} from './reclaim.mjs';
+import {unionAt,peerAt,stopRule,policyCard} from './policies.mjs';
 const clone=v=>structuredClone(v);
 const valid=v=>Number.isFinite(v);
 export class StageDay extends Day {
-  constructor(data,manifest){super(data);this.data=data;this.setups=manifest.setups;this.default_setup=manifest.default_setup;this.deadline=data.deadline;this.underlying=data.underlying;}
+  constructor(data,manifest){super(data);this.data=data;this.setups=manifest.setups;this.default_setup=manifest.default_setup;this.deadline=data.deadline;this.underlying=data.underlying;this.roster=data.policy_signals?.version===1;}
   quote(cid,minute){const q=this.quotes.get(`${cid}@${minute}`);return q&&valid(q.bid)&&valid(q.ask)&&q.bid>0&&q.ask>=q.bid?q:null;}
   trend_gate(){return null;}
   spot(minute){return minute===0?this.meta.session_open:this.underlying[minute-1]?.close??null;}
@@ -13,6 +14,12 @@ export class StageDay extends Day {
     return this.menu.find(c=>c.expiration===this.data.expiration&&c.strike===strike&&c.right===this.meta.morning_side&&(c.listed_minute??0)<=minute)??null;
   }
   setupAt(setup,minute){
+    if(setup.entry.kind==='union')return unionAt(this.data.policy_signals.union,minute);
+    if(setup.peer_rule){
+      const peer=peerAt(this.meta.symbol,this.meta.morning_side,this.data.policy_signals.spy_premarket);
+      if(peer.status)return peer;
+      return {...this.parentSetupAt(setup,minute),peer:peer.peer};
+    }
     const signal=this.parentSetupAt(setup,minute);
     if(setup.overlay==='entry_vwap_5m_2'&&signal.entry_minute!=null&&minute>=signal.entry_minute){
       const veto=entryVeto(this.bars,this.meta.morning_side,signal.entry_minute,minute);
@@ -50,7 +57,8 @@ export class StageDay extends Day {
       if(e.kind==='adverse'?adverse:adverseSeen&&reclaimed)return triggered(end+1,end,extra);
       adverseSeen||=adverse;
     }
-    return result(minute>=anchor+30?'cash':'watching',Math.min(minute,anchor+30),null,{...extra,adverse_seen:adverseSeen});
+    return result(minute>=anchor+30?'cash':'watching',Math.min(minute,anchor+30),null,{...extra,adverse_seen:adverseSeen,
+      ...(this.roster?{window_start:anchor+Math.floor((minute-anchor)/width)*width,window_end:Math.min(anchor+30,anchor+(Math.floor((minute-anchor)/width)+1)*width)}:{})});
   }
 }
 export class StageGame extends Game {
@@ -60,10 +68,25 @@ export class StageGame extends Game {
     super(day,{...options,layers:{...(options.layers??DEFAULT_LAYERS),model:false},plan:{entry:'discretionary',risk:Math.min(10,Math.max(1,Math.ceil(setup.budget*setup.exit.stop/20000))),stop:setup.exit.stop,trades:setup.max_entries}});
     this.setup=setup;
     if(!options.saved){this.s.engine_version=2;this.s.setup_id=id;this.s.layers.model=false;this.s.events[0].note='Market open. Follow the setup in this replay pack.';}
+    if(day.roster&&!options.saved)this.observe_gate();
   }
   available(cid){return this.day.quote(cid,this.s.minute)?1000:0;}
   use_depth(){}
   nextMinute(){
+    if(this.day.roster){
+      const m=this.s.minute,times=[this.day.deadline,(Math.floor(m/5)+1)*5];
+      for(const setup of this.day.setups){
+        const signal=this.day.setupAt(setup,m),e=setup.entry;
+        if(['cash','gap','veto','not_applicable','missed'].includes(signal.status))continue;
+        if(signal.entry_minute>m)times.push(signal.entry_minute);
+        if(signal.cutoff>m)times.push(signal.cutoff);
+        if(e.kind==='union')times.push(0,5,10,15,20);
+        else if(e.kind!=='clock'){times.push(e.anchor);for(let end=e.anchor+e.window;end<=e.anchor+30;end+=e.window)times.push(end);}
+      }
+      if(this.s.position)times.push(stopRule(this.s.position,this.setup,m).activation);
+      const trend=this.trendExit();if(trend?.execution_minute>m)times.push(trend.execution_minute);
+      return Math.min(...times.filter(t=>t>m));
+    }
     const s=this.s,e=this.setup.entry,seen=this.day.setupAt(this.setup,s.minute);
     const times=[this.day.deadline,(Math.floor(s.minute/5)+1)*5];
     if(seen.entry_minute>s.minute)times.push(seen.entry_minute);
@@ -84,12 +107,18 @@ export class StageGame extends Game {
     this.check('Entry within setup capital and contract limits',p.entry*qty*100<=this.setup.budget+.001&&qty<=this.setup.max_contracts);
     this.check('Entry quote met the setup premium and spread rule',q.ask>=.5&&(q.ask-q.bid)/((q.ask+q.bid)/2)<=.15+1e-10);
     this.check('One entry for this setup',this.s.entries<=this.setup.max_entries);
+    if(this.day.roster)this.check('Selected the causal ATM contract',cid===this.day.contractAt(this.s.minute)?.id);
     if(this.setup.overlay==='entry_vwap_5m_2')this.check('Respected the VWAP entry veto',signal.status!=='veto');
     const first=x.family==='full'||qty===1?qty:Math.min(qty-1,Math.max(1,Math.floor(qty*x.fraction+.5)));
     p.target_plan=[{percent:x.first,qty:first},...(qty>first?[{percent:x.second,qty:qty-first}]:[])];
   }
   observe_stop(){
     const p=this.s.position;if(!p||p.stop_alert!=null||this.s.minute<p.entry_minute+Math.max(1,this.setup.exit.grace))return;
+    if(this.day.roster){
+      const q=this.day.quote(p.id,this.s.minute),stop=stopRule(p,this.setup,this.s.minute);
+      if(q&&stop.active&&q.bid<=stop.price){p.stop_alert=this.s.minute;this.event('stop_alert',`${stop.breakeven?'Breakeven runner':'Premium'} stop reached. Exit the remaining contracts now.`);}
+      return;
+    }
     super.observe_stop();
   }
   observe_profit(){
@@ -127,6 +156,15 @@ export class StageGame extends Game {
     }
   }
   observe_gate(){
+    if(this.day.roster){
+      for(const setup of this.day.setups){
+        const signal=this.day.setupAt(setup,this.s.minute);
+        if(!['alert','ready','cash','gap','veto'].includes(signal.status)||this.s.events.some(e=>e.kind==='policy'&&e.policy_id===setup.id&&e.status===signal.status))continue;
+        const card=policyCard(setup,signal,this);
+        this.event('policy',`${setup.name}: ${card.label}. ${card.detail}`,{policy_id:setup.id,status:signal.status,entry_minute:signal.entry_minute});
+      }
+      return;
+    }
     const now=this.day.setupAt(this.setup,this.s.minute);
     if(['alert','ready','cash','gap','veto'].includes(now.status)&&!this.s.events.some(e=>e.kind==='setup'&&e.status===now.status))this.event('setup',({alert:'Setup triggered; prepare for the announced entry.',ready:'Setup entry is now.',cash:'No setup trigger. Stay in cash.',gap:'Setup inputs are missing. No signal is invented.',veto:'Two completed 5-minute own-VWAP conflicts. Entry vetoed for this day; stay in cash.'})[now.status],{status:now.status});
     if(now.entry_veto?.available===false&&!this.s.events.some(e=>e.kind==='vwap_unavailable'))this.event('vwap_unavailable','VWAP entry check unavailable. Follow the original reclaim setup.');
@@ -147,27 +185,46 @@ export class StageGame extends Game {
     }else if(t?.status==='due'&&t.priority==='missing_quote')this.event('unknown','No usable bid at the scheduled VWAP exit. No price is invented.');
   }
   advance(note=''){
+    if(this.day.roster){this.walk(note);if(this.s.minute>=this.day.deadline)this.finish();return;}
     this.miss_trend();this.miss_profit();this.event('wait',note||(this.s.position?'Held the position.':'Stayed flat.'));
     this.s.minute=this.nextMinute();this.observe_gate();this.observe_stop();this.observe_profit();this.observe_trend();
     if(this.s.minute>=this.day.deadline)this.finish();
   }
   finish(){
+    if(this.day.roster)while(this.s.minute<this.day.deadline)this.walk();
     while(this.s.minute<this.day.deadline){this.miss_trend();this.miss_profit();this.s.minute=this.nextMinute();this.observe_gate();this.observe_stop();this.observe_profit();this.observe_trend();}
     this.miss_profit();
     if(this.s.position){
       if(this.day.quote(this.s.position.id,this.s.minute))this.sell(this.s.position.qty,'Setup-close liquidation.',true);
       else{this.check('Position fully closed by setup close',false);this.event('unknown','Missing close price. Final P&L is unresolved.');}
     }
-    if(this.s.entries===0){const signal=this.day.setupAt(this.setup,this.s.minute);if(['cash','veto'].includes(signal.status))this.check(signal.status==='veto'?'Respected the VWAP entry veto':'Stayed in cash without an entry signal',true);else if(signal.status==='missed')this.check('Acted on the setup entry',false);}
+    if(this.s.entries===0){const signal=this.day.setupAt(this.setup,this.s.minute);if(['cash','veto','not_applicable'].includes(signal.status))this.check(signal.status==='veto'?(this.day.roster?'Respected the entry veto':'Respected the VWAP entry veto'):'Stayed in cash without an entry signal',true);else if(signal.status==='missed')this.check('Acted on the setup entry',false);}
     this.s.finished=true;this.event('finish','Session complete.');
   }
   view(){
     const v=super.view(),minute=this.s.minute,signal=this.day.setupAt(this.setup,minute);
     return {...v,engine_version:2,setup_id:this.setup.id,setup:clone(this.setup),setup_signal:signal,trend_exit:this.trendExit(),
+      ...(this.day.roster?{policy_cards:this.day.setups.map(s=>policyCard(s,this.day.setupAt(s,minute),this)),
+        stop_rule:this.s.position?stopRule(this.s.position,this.setup,minute):null,
+        ...(this.s.finished?{benchmarks:clone(this.day.data.policy_benchmarks.filter(b=>b.setup_id===this.setup.id)),benchmark_note:'Saved automatic reference · capped target fills. Your manual exits use the observed bid.'}:{})}:{}),
       ...(this.s.finished&&this.day.data.benchmarks?{benchmarks:clone(this.day.data.benchmarks.filter(b=>b.setup_id===this.setup.id||b.setup_id==='stock_reclaim'&&this.setup.overlay)),benchmark_note:'Saved historical study · automatic capped targets · sizing shown separately from your manual bid fills.'}:{}),
       watchlist:{rank:this.day.meta.rank,score:this.day.meta.watch_score,side:this.day.meta.morning_side,name:this.day.meta.watchlist},
       deadline:this.day.deadline,next_minute:this.s.finished?null:this.nextMinute(),ema_fast:9,spot:this.day.spot(minute),screens:[],probability:null,probability_minute:null,forecasts:[],
       gate_passed:signal.status==='ready',gate_minute:signal.status==='ready'?minute:null,execution:'excellent_at_observed_bid_ask'};
+  }
+  walk(note=''){
+    // The button announces only the next known checkpoint. Inspect intervening
+    // minute observations sequentially and pause when new action becomes known.
+    const end=this.nextMinute();this.miss_trend();this.miss_profit();
+    if(this.s.position?.stop_alert===this.s.minute)this.check('Exited at the stop observation',false);
+    this.event('wait',note||(this.s.position?'Held the position.':'Stayed flat.'));
+    while(this.s.minute<end){
+      this.s.minute++;const start=this.s.events.length;
+      this.observe_gate();this.observe_stop();this.observe_profit();this.observe_trend();
+      const p=this.s.position;
+      if(p&&!this.day.quote(p.id,this.s.minute)&&!this.s.events.some(e=>e.kind==='unknown'&&e.minute===this.s.minute))this.event('unknown','No usable position quote. No price or fill is invented.');
+      if(this.s.events.slice(start).some(e=>['policy','stop_alert','profit_target','trend_signal','unknown'].includes(e.kind)))break;
+    }
   }
   summary(){return {...super.summary(),engine_version:2,setup_id:this.setup.id,setup_name:this.setup.name};}
 }
