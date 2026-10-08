@@ -175,9 +175,10 @@ function renderDebrief(){
 }
 
 function benchmarkReview(){
+  const price=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:4}).format(n);
   const rows=state.benchmarks,selected=rows.filter(r=>r.setup_id===state.setup_id),parent=rows.filter(r=>r.setup_id==='stock_reclaim'&&r.setup_id!==state.setup_id);
   const row=r=>`<div class="benchmark-row"><span>${r.setup_id===state.setup_id?'This setup':'Original reclaim'} · ${r.profile==='lots2'?'exactly 2 contracts':'$2,000 / max 10'}<small>${r.eligible?`${r.n} contracts · ${time(r.entry_minute)} entry`:r.veto?'Vetoed · no trade':'No trade · '+escape(r.status)}</small></span><b>${money(r.pnl)}</b></div>`;
-  const detail=r=>`<div class="benchmark-path"><b>${r.profile==='lots2'?'Exactly 2 contracts':'$2,000 / max 10'}</b>${r.eligible?`<p>${r.n} × ${escape(r.strike)} ${escape(r.side)} · ${escape(r.expiration)}<br>${time(r.entry_minute)} BUY ${r.n} @ ${money(r.debit/(r.n*100))}</p>${r.events.map(e=>`<p>${time(e[0])} SELL ${e[1]} @ ${money(e[2])} · ${escape(e[3].replace('_',' '))}</p>`).join('')}`:`<p>${r.veto?'Entry vetoed. No buy or sale.':'Stayed in cash.'}</p>`}</div>`;
+  const detail=r=>`<div class="benchmark-path"><b>${r.profile==='lots2'?'Exactly 2 contracts':'$2,000 / max 10'}</b>${r.eligible?`<p>${r.n} × ${escape(r.strike)} ${escape(r.side)} · ${escape(r.expiration)}<br>${time(r.entry_minute)} BUY ${r.n} @ ${price(r.debit/(r.n*100))}</p>${r.events.map(e=>`<p>${time(e[0])} SELL ${e[1]} @ ${price(e[2])} · ${escape(e[3].replace('_',' '))}</p>`).join('')}`:`<p>${r.veto?'Entry vetoed. No buy or sale.':'Stayed in cash.'}</p>`}</div>`;
   return `<section class="benchmark-review"><h3>Historical reference</h3><p class="small">${escape(state.benchmark_note)}</p>${[...selected,...parent].map(row).join('')}<details><summary>Reference fills</summary>${selected.map(detail).join('')}</details><p class="small muted">Selected after full-history comparison. No fresh out-of-sample claim.</p></section>`;
 }
 
