@@ -65,7 +65,7 @@ export class StageGame extends Game {
   constructor(day,options={}){
     const id=options.saved?.setup_id??options.setup_id??day.default_setup;
     const setup=day.setups.find(x=>x.id===id);if(!setup)throw Error('This setup is not in the replay pack.');
-    super(day,{...options,layers:{...(options.layers??DEFAULT_LAYERS),model:false},plan:{entry:'discretionary',risk:Math.min(10,Math.max(1,Math.ceil(setup.budget*setup.exit.stop/20000))),stop:setup.exit.stop,trades:setup.max_entries}});
+    super(day,{...options,layers:{...(options.layers??{...DEFAULT_LAYERS,levels:true}),model:false},plan:{entry:'discretionary',risk:Math.min(10,Math.max(1,Math.ceil(setup.budget*setup.exit.stop/20000))),stop:setup.exit.stop,trades:setup.max_entries}});
     this.setup=setup;
     if(!options.saved){this.s.engine_version=2;this.s.setup_id=id;this.s.layers.model=false;this.s.events[0].note='Market open. Follow the setup in this replay pack.';}
     if(day.roster&&!options.saved)this.observe_gate();

@@ -1,5 +1,6 @@
 import {createDay,createGame} from './stage2.mjs';
 import {digest,validateDay,validateManifest,validateSaved,packLines} from './pack.mjs';
+import {chartEvidence} from './chart-data.mjs';
 
 const scope=new URL('.',location.href).pathname;
 export const sessionKey='two-stage-browser:'+scope+':session';
@@ -44,9 +45,10 @@ export async function localAPI(path,params){
     return {cases:pack?.manifest.cases.length??0,pack:pack?.manifest??null,packs:(await all('packs')).map(p=>({id:p.id,name:p.manifest.name,cases:p.manifest.cases.length})),history:sessions.map(s=>s.summary).sort((a,b)=>b.created_at.localeCompare(a.created_at))};
   }
   if(url.pathname==='/api/pack'){const pack=await read('packs',params.id);if(!pack)throw Error('Replay pack not found.');await put('settings',{id:'active-pack',value:pack.id});return {ok:true};}
-  if(url.pathname==='/api/state'||url.pathname==='/api/export'){
+  if(url.pathname==='/api/state'||url.pathname==='/api/export'||url.pathname==='/api/chart'){
     const record=await read('sessions',url.searchParams.get('id'));if(!record)throw Error('Saved session not found');
     const game=createGame(await dayFor(record),{saved:record.state});
+    if(url.pathname==='/api/chart')return chartEvidence(game,{contract:url.searchParams.get('contract')??'',width:Number(url.searchParams.get('width'))});
     return url.pathname==='/api/state'?game.view():{state:game.view(),summary:game.summary(),pack_id:record.pack_id};
   }
   if(url.pathname==='/api/new'){

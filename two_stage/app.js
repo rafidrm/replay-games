@@ -2,6 +2,7 @@ import {localAPI,importPack,backupProgress,restoreProgress,lastSession,sessionKe
 import {entrySetup,profitSetup} from './signals.mjs';
 import {moneyness,nearStrikes,orderContracts} from './contracts.mjs';
 import {entrySizing} from './policies.mjs';
+import {optionSVG,optionLabel,quoteCaption,windowCaption} from './option-chart.mjs';
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const money = n => n == null ? 'Unknown' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
@@ -9,8 +10,11 @@ const num = (n,d=2) => n == null ? '—' : Number(n).toFixed(d);
 const time = m => `${String(Math.floor((570+m)/60)).padStart(2,'0')}:${String((570+m)%60).padStart(2,'0')}`;
 const escape = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 $('#welcome').hidden=false;
-const presets = {price:{},vwap:{vwap:true},full:{vwap:true,ema:true,volume:true,detector:true,model:true}};
+const presets = {price:{},vwap:{vwap:true,levels:true},full:{vwap:true,ema:true,volume:true,levels:true,detector:true,model:true}};
 let state=null, side='CALL', selected='', manualSelection='', busy=false, history=[], finishFocus=null,library=null;
+let chartData=null,chartRequest='';
+const intervalKey=()=>sessionKey+':interval:'+state.id;
+const chartWidth=()=>state.engine_version===2?(Number(localStorage.getItem(intervalKey()))|| (state.setup?.entry.window===3?3:5)):5;
 
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,6500)}
 async function api(path,body){return localAPI(path,body)}
@@ -56,6 +60,7 @@ function render(){
   $('#setup-name').hidden=!state.setup;$('#setup-name').textContent=state.setup?.name||'';$('#ema-label').textContent=`EMA ${state.ema_fast||8} / 21`;
   $('[data-layer="model"]').closest('label').hidden=!!state.setup;
   $('#finish-description').textContent=state.setup?`Reveal the remaining candles and close at the ${time(state.deadline)} bid. Missing prices leave P&L unresolved.`:'Reveal the remaining candles and close at the 16:00 bid. Unavailable quotes or depth leave P&L unresolved.';
+  chartData=null;chartRequest='';
   renderPolicyCards();drawChart();drawModel();renderSignals();renderGates();renderFocus();renderContracts();renderPosition();renderDiscipline();renderTape();renderDebrief();
   $('#save-note').disabled=state.finished;$('#decision-note').disabled=state.finished;
 }
@@ -144,6 +149,7 @@ function renderQuote(){
   $('#buy').textContent=q?`Buy ${Number.isInteger(qty)?qty:'…'} at ${money(q.ask)}`:'Buy at ask';
   if(state.setup_signal?.status==='veto'&&q)$('#buy').textContent='Off-plan buy · entry vetoed';
   else if(state.policy_cards&&q&&(state.setup_signal.status!=='ready'||side!==state.watchlist.side||state.entries))$('#buy').textContent='Off-plan buy · '+money(q.ask);
+  refreshCharts();
 }
 function renderPosition(){
   const p=state.position;$('#entry-form').hidden=!!p;$('#position-form').hidden=!p;$('#position-tag').textContent=p?(p.runner?'RUNNERS':'OPEN'):'FLAT';$('#trade-heading').textContent=p?'Position':'Entry';
@@ -218,17 +224,31 @@ function drawChart(){
   if(!state)return;
   const svg=$('#chart'),W=Math.max(300,svg.clientWidth),H=svg.clientHeight, left=9,right=59,top=25,bottom=27,vol=state.layers.volume?55:0,priceBottom=H-bottom-vol-12;
   svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
-  const bars=state.bars,valid=bars.filter(b=>b.close!=null),values=valid.flatMap(b=>[b.high,b.low,b.vwap,b.ema8,b.ema21].filter(v=>v!=null));
-  if(!values.length){svg.innerHTML=`<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#8396ac" font-size="12">${state.minute===0?'First 5-minute candle at 09:35':'No complete candles yet'}</text>`;svg.onpointermove=null;$('#chart-tip').hidden=true;return}
-  values.push(...Object.values(state.levels).filter(v=>v!=null));
+  const width=chartData?.width??chartWidth(),bars=chartData?.bars??(width===5?state.bars:[]);
+  $('#candles-3').disabled=state.engine_version!==2;$('#candles-3').title=state.engine_version===2?'Completed 3-minute stock candles':'This pack contains 5-minute stock candles';
+  for(const n of [3,5]){const b=$('#candles-'+n);b.classList.toggle('active',width===n);b.setAttribute('aria-pressed',String(width===n));}
+  $('#ema-label').textContent=`EMA ${state.ema_fast||8} / 21${width===3?' · 5m':''}`;
+  $('#stock-evidence').hidden=state.setup?.entry.monitor!=='stock';
+  $('#stock-evidence').textContent=state.setup?.entry.monitor==='stock'?(windowCaption(chartData?.stock_windows??[])||`Watch starts ${time(state.setup.entry.anchor)}`)+(state.setup.overlay==='exit_vwap_5m_2'?' · Entry 3m / exit 5m':''):'';
+  const valid=bars.filter(b=>b.close!=null),values=valid.flatMap(b=>[b.high,b.low,b.vwap,b.ema8,b.ema21].filter(v=>v!=null));
+  const earlyLevels=Object.entries(state.levels).filter(([,p])=>p!=null).map(([name,p])=>`${{previous_close:'Prior',premarket_high:'PM high',premarket_low:'PM low'}[name]} ${num(p)}`);
+  $('#level-context').hidden=!earlyLevels.length;$('#level-context').textContent=earlyLevels.join(' · ');
+  if(!values.length){svg.innerHTML=`<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#8396ac" font-size="12">${state.minute<width?`First ${width}-minute candle at ${time(width)}`:chartData?'No complete candles available':'Loading completed candles…'}</text>`;svg.onpointermove=null;$('#chart-tip').hidden=true;return}
+  if(chartData?.stock_reference!=null)values.push(chartData.stock_reference);
+  const baseLo=Math.min(...values),baseHi=Math.max(...values),near=Math.max((baseHi-baseLo)*.25,baseLo*.001),plotLevels={},outside=[];
+  const levelNames={previous_close:'Prior',premarket_high:'PM high',premarket_low:'PM low'};
+  for(const [name,p] of Object.entries(state.levels)){if(p==null)continue;if(p>=baseLo-near&&p<=baseHi+near){plotLevels[name]=p;values.push(p);}else outside.push(`${p<baseLo?'↓':'↑'} ${levelNames[name]} ${num(p)}`);}
+  $('#level-context').hidden=!outside.length;$('#level-context').textContent=outside.join(' · ');
   const lo=Math.min(...values),hi=Math.max(...values),pad=Math.max((hi-lo)*.13,lo*.001),min=lo-pad,max=hi+pad;
-  const slots=Math.max(state.policy_cards?12:28,bars.length+3),pw=W-left-right,dx=pw/slots,x=m=>left+(m/5-.5)*dx,y=p=>top+(max-p)/(max-min)*(priceBottom-top),cw=Math.max(2,Math.min(11,dx*.63));
+  const slots=Math.max(state.policy_cards?12:28,bars.length+3),pw=W-left-right,dx=pw/slots,x=m=>left+(m/width-.5)*dx,y=p=>top+(max-p)/(max-min)*(priceBottom-top),cw=Math.max(2,Math.min(11,dx*.63));
   let out=`<defs><clipPath id="plot-clip"><rect x="${left}" y="${top}" width="${pw}" height="${priceBottom-top}"/></clipPath></defs>`;
   for(let i=0;i<5;i++){let p=min+(max-min)*i/4,yy=y(p);out+=`<line x1="${left}" x2="${W-right+4}" y1="${yy}" y2="${yy}" stroke="#253246" stroke-dasharray="2 5"/><text x="${W-right+11}" y="${yy+3}" fill="#7f93aa" font-size="9" font-family="monospace">${p.toFixed(2)}</text>`}
   const step=W<420?(slots>50?18:12):(slots>50?12:6);
-  for(let i=0;i<slots;i+=step){out+=`<text x="${left+i*dx}" y="${H-7}" fill="#7f93aa" font-size="9" font-family="monospace">${time(i*5)}</text>`}
+  for(let i=0;i<slots;i+=step){out+=`<text x="${left+i*dx}" y="${H-7}" fill="#7f93aa" font-size="9" font-family="monospace">${time(i*width)}</text>`}
   out+='<g clip-path="url(#plot-clip)">';
-  for(const [name,p] of Object.entries(state.levels)){if(p!=null)out+=`<line x1="${left}" x2="${W-right}" y1="${y(p)}" y2="${y(p)}" stroke="#607e98" stroke-dasharray="5 5"/><text x="${left+5}" y="${y(p)-4}" fill="#8da4b9" font-size="8">${{previous_close:'PRIOR CLOSE',premarket_high:'PM HIGH',premarket_low:'PM LOW'}[name]}</text>`}
+  for(const w of chartData?.stock_windows??[]){const color=w.status==='signal'?'#65e4b5':w.status==='adverse'?'#ed8191':'#8396ac';out+=`<rect x="${x(w.start)+dx/2}" y="${top}" width="${(w.end-w.start)/width*dx}" height="${priceBottom-top}" fill="${color}" opacity=".1"><title>${escape(windowCaption([w]))}</title></rect>`;}
+  if(chartData?.stock_reference!=null){const p=chartData.stock_reference;out+=`<line x1="${x(chartData.stock_anchor)+dx/2}" x2="${x(state.minute)+dx/2}" y1="${y(p)}" y2="${y(p)}" stroke="#eac575" stroke-dasharray="3 3"/><text x="${left+5}" y="${y(p)-4}" fill="#eac575" font-size="9">RECLAIM ${num(p)}</text>`;}
+  for(const [name,p] of Object.entries(plotLevels)){if(p!=null)out+=`<line x1="${left}" x2="${W-right}" y1="${y(p)}" y2="${y(p)}" stroke="#607e98" stroke-dasharray="5 5"/><text x="${left+5}" y="${y(p)-4}" fill="#8da4b9" font-size="8">${{previous_close:'PRIOR CLOSE',premarket_high:'PM HIGH',premarket_low:'PM LOW'}[name]} ${num(p)}</text>`}
   for(const [key,color] of [['vwap','#eac575'],['ema8','#b298ef'],['ema21','#6ca9f6']]){let path='',gap=true;for(const b of bars){if(b[key]==null){gap=true;continue}path+=`${gap?'M':'L'}${x(b.minute)},${y(b[key])} `;gap=false}if(path)out+=`<path d="${path}" fill="none" stroke="${color}" stroke-width="1.5" opacity=".9"/>`}
   for(const b of valid){const color=b.close>=b.open?'#65d9b0':'#ed8191';out+=`<line x1="${x(b.minute)}" x2="${x(b.minute)}" y1="${y(b.high)}" y2="${y(b.low)}" stroke="${color}"/><rect x="${x(b.minute)-cw/2}" y="${Math.min(y(b.open),y(b.close))}" width="${cw}" height="${Math.max(1,Math.abs(y(b.open)-y(b.close)))}" fill="${color}"/>`}
   for(const f of state.fills){const b=bars.findLast(b=>b.minute<=f.minute);if(b?.close!=null){const xx=x(f.minute),yy=y(b.close)+(f.side==='BUY'?13:-13);out+=`<circle cx="${xx}" cy="${yy}" r="6" fill="${f.side==='BUY'?'#65e4b5':'#eac575'}"/><text x="${xx}" y="${yy+2.5}" text-anchor="middle" fill="#09251d" font-size="7" font-weight="bold">${f.side==='BUY'?'B':'S'}</text>`}}
@@ -248,7 +268,43 @@ function drawChart(){
   svg.onpointermove=e=>{const r=svg.getBoundingClientRect(),index=Math.floor((e.clientX-r.left-left)/dx),b=bars[index];if(!b){$('#chart-tip').hidden=true;return}$('#chart-tip').hidden=false;$('#chart-tip').textContent=`${time(b.minute)} ET · O ${num(b.open)}  H ${num(b.high)}  L ${num(b.low)}  C ${num(b.close)}${state.layers.vwap?' · VWAP '+num(b.vwap):''}${state.layers.ema?' · EMA'+(state.ema_fast||8)+' '+num(b.ema8)+' / EMA21 '+num(b.ema21):''}`};
   svg.onpointerleave=()=>$('#chart-tip').hidden=true;
 }
-new ResizeObserver(()=>{if(state&&!$('#game').hidden){drawChart();drawModel()}}).observe($('.chart-wrap'));
+new ResizeObserver(()=>{if(state&&!$('#game').hidden){drawChart();drawModel();drawOptions()}}).observe($('.chart-wrap'));
+for(const n of [3,5])$('#candles-'+n).onclick=()=>{localStorage.setItem(intervalKey(),String(n));refreshCharts();};
+
+async function refreshCharts(){
+  if(!state)return;
+  const contract=state.position?.id||(!manualSelection&&state.entries?state.fills.findLast(f=>f.side==='BUY')?.contract:selected)||selected,key=JSON.stringify([state.id,state.minute,state.events.length,contract,chartWidth()]);
+  if(key===chartRequest)return;
+  chartRequest=key;chartData=null;drawChart();drawOptions();
+  try{
+    const data=await api('/api/chart?'+new URLSearchParams({id:state.id,contract,width:chartWidth()}));
+    if(chartRequest!==key||data.id!==state.id||data.minute!==state.minute||data.revision!==state.events.length)return;
+    chartData=data;drawChart();drawOptions();
+  }catch(error){if(chartRequest===key){chartRequest='';$('#option-charts').textContent='Charts unavailable · '+error.message;}}
+}
+function drawOptions(){
+  const container=$('#option-charts');
+  $('#option-cadence').textContent=state.engine_version===2?'1m quotes':'5m quotes';
+  if(!chartData){container.innerHTML='<p class="small muted">Loading observed quotes…</p>';return;}
+  let html='';
+  if(chartData.monitor_status==='gap')html+='<p class="chart-evidence">Setup paused · missing observations</p>';
+  if(chartData.monitor_status&&!chartData.charts.some(c=>c.role.startsWith('setup'))){
+    const status=chartData.monitor_status;
+    html+=`<p class="chart-evidence">${status==='veto'?'Setup vetoed · no anchor watch':status==='not_applicable'?'Premium setup is QQQ only':status==='gap'?'Setup anchor quote unavailable':`Setup option fixed at ${time(chartData.monitor_anchor)}`}</p>`;
+  }
+  for(const [i,c] of chartData.charts.entries()){
+    const label={setup:'Setup option · fixed anchor',position:'Your position',traded:'Traded contract',selected:'Selected contract','setup-position':'Setup option & your position','setup-selected':'Setup option & selected contract','setup-traded':'Setup option & traded contract'}[c.role];
+    html+=`<section class="option-series"><div class="option-title"><h3>${label}</h3><span>${escape(optionLabel(c.contract))}</span></div><div class="option-legend"><span>Bid <i class="key green"></i></span><span>Ask <i class="key purple"></i></span>${c.role.startsWith('setup')?'<span>Mid <i class="key gold"></i></span>':''}</div><svg data-option-chart="${i}" role="img" aria-label="${escape(label+' '+optionLabel(c.contract)+' quotes through '+time(state.minute))}"></svg><div class="option-tip" data-option-tip="${i}">${escape(quoteCaption(c,state.minute))}</div>${c.windows.length?`<div class="chart-evidence">${escape(windowCaption(c.windows))}</div>`:''}</section>`;
+  }
+  container.innerHTML=html||'<p class="small muted">Select a contract to see its quotes.</p>';
+  for(const svg of $$('[data-option-chart]')){
+    const i=Number(svg.dataset.optionChart),c=chartData.charts[i],W=Math.max(280,svg.clientWidth),H=210;
+    svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML=optionSVG(c,state.minute,W,H);
+    const tip=$('[data-option-tip="'+i+'"]'),current=quoteCaption(c,state.minute);
+    svg.onpointermove=e=>{const r=svg.getBoundingClientRect(),end=Math.max(30,state.minute+3),m=Math.round((e.clientX-r.left-9)/(W-66)*end/c.cadence)*c.cadence;tip.textContent=m>=0&&m<=state.minute?quoteCaption(c,m):current;};
+    svg.onpointerleave=()=>tip.textContent=current;
+  }
+}
 
 async function loadHistory(){
   const data=await api('/api/info');library=data;renderLibrary();history=data.history;$('#pool').textContent=data.cases?`${data.cases} qualifying days on this device`:'Import a replay pack to start';$('#deal').disabled=!data.cases;$('#library-status').textContent=data.pack?`${data.cases} days · ready offline after first load`:'Your data stays on this device.';$('#import-status').textContent=data.pack?`${data.cases} days imported`:'';
@@ -275,6 +331,7 @@ $('#backup-progress').onclick=()=>task(async()=>downloadJSON(await backupProgres
 $('#restore-file').onchange=()=>{const file=$('#restore-file').files[0];if(!file)return;task(async()=>{try{const result=await restoreProgress(file);await loadHistory();$('#restore-status').textContent=`${result.added} rounds restored · ${result.kept} existing rounds kept`;toast('Progress restored. Open Sessions to resume a round.');}catch(error){$('#restore-status').textContent=error.message;throw error;}finally{$('#restore-file').value='';}})};
 $('#dock-next').onclick=()=>state.finished?$('#another').click():action('advance');
 $('#dock-trade').onclick=()=>(state.finished?$('#debrief'):$('.trade-panel')).scrollIntoView({behavior:'smooth',block:'start'});
+$('#dock-options').onclick=()=>$('#options-panel').scrollIntoView({behavior:'smooth',block:'start'});
 $('#dock-chart').onclick=()=>(state.policy_cards?$('.chart-panel'):$('.signal-focus')).scrollIntoView({behavior:'smooth',block:'start'});
 if('serviceWorker' in navigator){
   let reloadForUpdate=false;
