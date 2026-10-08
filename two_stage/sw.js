@@ -1,4 +1,4 @@
-const VERSION='two-stage-9ed7ba294af3a627';
+const VERSION='two-stage-16ca590f179104c5';
 const PREFIX='two-stage:'+self.registration.scope+':';
 const CACHE=PREFIX+VERSION;
 const ASSETS=['./','./index.html','./style.css','./app.js','./engine.mjs','./storage.mjs','./stage2.mjs','./pack.mjs','./signals.mjs','./contracts.mjs','./manifest.webmanifest','./icon-192.png','./icon-512.png'];

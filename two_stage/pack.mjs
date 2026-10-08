@@ -88,6 +88,15 @@ export function validateSaved(s,day=null){
   }
   if(day){
     if(s.engine_version===2&&(!day.setups?.some(x=>x.id===s.setup_id)||s.minute>day.deadline))bad();
+    if(Boolean(day.setups)!==(s.engine_version===2))bad();
+    if(s.engine_version===2){
+      const setup=day.setups.find(x=>x.id===s.setup_id),x=setup.exit;
+      if(s.plan.entry!=='discretionary'||s.plan.stop!==x.stop||s.plan.trades!==setup.max_entries)bad();
+      if(p){const n=p.initial_qty,first=x.family==='full'||n===1?n:Math.min(n-1,Math.max(1,Math.floor(n*x.fraction+.5)));
+        const expected=[{percent:x.first,qty:first},...(n>first?[{percent:x.second,qty:n-first}]:[])];
+        if(JSON.stringify(p.target_plan)!==JSON.stringify(expected))bad();
+      }
+    }
     if(s.case_id!==day.meta.case_id||(s.menu_version??1)!==day.menu_version)bad();
     const contracts=new Map(day.menu.map(c=>[c.id,c]));
     if(s.fills.some(f=>!contracts.has(f.contract)))bad();
