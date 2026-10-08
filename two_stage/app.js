@@ -50,7 +50,7 @@ document.addEventListener('keydown',e=>{if(e.code==='Space'&&!['INPUT','SELECT',
 
 function render(){
   document.body.classList.toggle('roster-game',!!state.policy_cards);
-  $('#welcome').hidden=true;$('#game').hidden=false;$('#mobile-dock').hidden=false;
+  $('#welcome').hidden=true;$('#game').hidden=false;$('#mobile-dock').hidden=false;$('#dock-models').hidden=!state.ws;$('#mobile-dock').classList.toggle('has-models',!!state.ws);
   $('#symbol').textContent=state.symbol;$('#session-date').textContent=new Date(state.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})+(state.repeated?' · repeated case':'');
   $('#clock').textContent=time(state.minute);$('#progress-fill').style.width=`${100*state.minute/(state.deadline||390)}%`;
   colored($('#total'),state.total);colored($('#realized'),state.realized);colored($('#unrealized'),state.unrealized);$('#cash').textContent=money(state.cash);$('#entries').textContent=`${state.entries} / ${state.plan.trades}`;
@@ -342,6 +342,7 @@ $('#restore-file').onchange=()=>{const file=$('#restore-file').files[0];if(!file
 $('#dock-next').onclick=()=>state.finished?$('#another').click():state.ws&&state.minute>=state.deadline?$('#finish').click():action('advance');
 $('#dock-trade').onclick=()=>(state.finished?$('#debrief'):$('.trade-panel')).scrollIntoView({behavior:'smooth',block:'start'});
 $('#dock-options').onclick=()=>$('#options-panel').scrollIntoView({behavior:'smooth',block:'start'});
+$('#dock-models').onclick=()=>$('#entry-models').scrollIntoView({behavior:'smooth',block:'start'});
 $('#dock-chart').onclick=()=>(state.policy_cards?$('.chart-panel'):$('.signal-focus')).scrollIntoView({behavior:'smooth',block:'start'});
 if('serviceWorker' in navigator){
   let reloadForUpdate=false;

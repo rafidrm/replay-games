@@ -1,4 +1,4 @@
-const VERSION='two-stage-8babea6367cdee2f';
+const VERSION='two-stage-6cd61935fa852e14';
 const PREFIX='two-stage:'+self.registration.scope+':';
 const CACHE=PREFIX+VERSION;
 const ASSETS=['./','./index.html','./style.css','./app.js','./engine.mjs','./storage.mjs','./stage2.mjs','./reclaim.mjs','./policies.mjs','./pack.mjs','./signals.mjs','./contracts.mjs','./chart-data.mjs','./option-chart.mjs','./games.mjs','./ws-orders.mjs','./ws-replay.mjs','./ws-game.mjs','./ws-validate.mjs','./ws-ui.mjs','./model-readings.mjs','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
