@@ -1,6 +1,6 @@
 const time=m=>`${String(Math.floor((570+m)/60)).padStart(2,'0')}:${String((570+m)%60).padStart(2,'0')}`;
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const price=v=>v==null?'—':'$'+v.toFixed(2);
+const price=v=>v==null?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:4}).format(v);
 export const optionLabel=c=>`${c.expiration} · $${c.strike} ${c.right}`;
 
 export function optionSVG(chart,minute,W,H=210){
@@ -16,10 +16,14 @@ export function optionSVG(chart,minute,W,H=210){
     const color=w.status==='signal'?'#65e4b5':w.status==='adverse'?'#ed8191':'#8396ac';
     out+=`<rect x="${x(w.start)}" y="${top}" width="${x(w.end)-x(w.start)}" height="${H-top-bottom}" fill="${color}" opacity=".09"/><text x="${x(w.end)}" y="${top-5}" text-anchor="end" fill="${color}" font-size="9">${w.status==='signal'?'Signal':w.status==='gap'?'Gap':'·'}</text>`;
   }
-  for(const line of chart.lines){
+  // Keep exact horizontal prices while separating coincident order labels.
+  const labelRows=chart.lines.map(line=>({line,y:y(line.price)-4})).sort((a,b)=>a.y-b.y);
+  for(let i=0;i<labelRows.length;i++)labelRows[i].y=Math.max(top+2,labelRows[i].y,i?labelRows[i-1].y+12:0);
+  for(let i=labelRows.length-1;i>=0;i--)labelRows[i].y=Math.min(H-bottom-3,labelRows[i].y,i<labelRows.length-1?labelRows[i+1].y-12:Infinity);
+  for(const {line,y:labelY} of labelRows){
     const color={anchor:'#eac575',entry:'#b6c5d4',target:'#65e4b5',stop:'#ed8191'}[line.kind];
     const label=line.label+(line.kind==='stop'&&!line.active?' · active '+time(line.activation):'');
-    out+=`<line x1="${x(Math.min(minute,line.start))}" x2="${x(minute)}" y1="${y(line.price)}" y2="${y(line.price)}" stroke="${color}" stroke-dasharray="4 4" opacity=".65"/><text x="${left+4}" y="${y(line.price)-4}" fill="${color}" font-size="9">${escape(label)} ${price(line.price)}</text>`;
+    out+=`<line x1="${x(Math.min(minute,line.start))}" x2="${x(minute)}" y1="${y(line.price)}" y2="${y(line.price)}" stroke="${color}" stroke-dasharray="4 4" opacity=".65"/><text x="${left+4}" y="${labelY}" fill="${color}" font-size="9">${escape(label)} ${price(line.price)}</text>`;
   }
   const keys=chart.role.startsWith('setup')?[['bid','#65d9b0'],['ask','#b298ef'],['mid','#eac575']]:[['bid','#65d9b0'],['ask','#b298ef']];
   for(const [key,color] of keys){

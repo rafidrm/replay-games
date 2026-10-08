@@ -1,3 +1,5 @@
+import {WS_RULES} from './ws-orders.mjs';
+import {validateWSSetup,validateWSReferences,validateWSState} from './ws-validate.mjs';
 export const digest=async text=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(x=>x.toString(16).padStart(2,'0')).join('');
 const keyPattern=/^\d{4}-\d{2}-\d{2}_[A-Z0-9.-]+@[1234]$/;
 const finite=v=>typeof v==='number'&&Number.isFinite(v);
@@ -10,6 +12,7 @@ export async function validateManifest(m){
   for(const r of m.records){if(!keyPattern.test(r.key)||!/^([a-f0-9]{64})$/.test(r.sha256)||keys.has(r.key))fail('bad record index.');keys.add(r.key);}
   if(m.cases.some(k=>!keys.has(k)||!k.endsWith(m.version===2?'@4':'@3'))||new Set(m.cases).size!==m.cases.length)fail('bad playable cases.');
   if(m.version===2){if(!Array.isArray(m.setups)||!m.setups.length||m.setups.length>30)fail('bad setups.');for(const setup of m.setups)validateSetup(setup);if(new Set(m.setups.map(s=>s.id)).size!==m.setups.length||!m.setups.some(s=>s.id===m.default_setup))fail('bad default setup.');}
+  if(m.setups?.some(s=>s.execution==='wealthsimple')&&(m.setups.length!==3||m.setups.some(s=>s.execution!=='wealthsimple')||m.default_setup!=='ws_p08'))fail('invalid Wealthsimple roster.');
   if(await digest(JSON.stringify(m.version===2?{records:m.records,setups:m.setups,default_setup:m.default_setup}:m.records))!==m.id)fail('manifest checksum mismatch.');
   if(typeof m.name!=='string'||m.name.length>100)fail('bad name.');
   return m;
@@ -70,7 +73,7 @@ export function validateSaved(s,day=null){
   if(typeof s.created_at!=='string'||!Number.isFinite(Date.parse(s.created_at))||!s.liquidity||typeof s.liquidity!=='object'||Object.values(s.liquidity).some(v=>!whole(v,0,1000000)))bad();
   for(const key of ['events','fills','checks','layer_history'])if(!Array.isArray(s[key])||s[key].length>20000)bad();
   for(const e of s.events)if(typeof e.kind!=='string'||typeof e.note!=='string'||!layers(e.layers)||!clock(e.minute))bad();
-  for(const f of s.fills)if(!['BUY','SELL'].includes(f.side)||typeof f.contract!=='string'||!whole(f.qty,1,1000)||!finite(f.price)||f.price<=0||!finite(f.pnl)||!clock(f.minute))bad();
+  for(const f of s.fills)if(!['BUY','SELL'].includes(f.side)||typeof f.contract!=='string'||!whole(f.qty,1,1000)||!finite(f.price)||(f.price<0||f.price===0&&!(s.ws_version===1&&f.side==='SELL'))||!finite(f.pnl)||!clock(f.minute))bad();
   for(const c of s.checks)if(typeof c.name!=='string'||typeof c.passed!=='boolean'||!clock(c.minute))bad();
   for(const h of s.layer_history)if(!clock(h.minute)||!layers(h.layers))bad();
   const p=s.position;
@@ -83,7 +86,7 @@ export function validateSaved(s,day=null){
     }
   }
   if(s.engine_version===2){
-    if(typeof s.setup_id!=='string'||(p&&(!Array.isArray(p.target_plan)||p.target_plan.length<1||p.target_plan.length>2||p.target_plan.some(t=>!whole(t.percent,1,1000)||!whole(t.qty,1,1000)))))bad();
+    if(typeof s.setup_id!=='string'||(p&&s.ws_version!==1&&(!Array.isArray(p.target_plan)||p.target_plan.length<1||p.target_plan.length>2||p.target_plan.some(t=>!whole(t.percent,1,1000)||!whole(t.qty,1,1000)))))bad();
     if(p)for(const f of p.profit_flags){if(!whole(f.required_qty,1,1000)||!whole(f.taken_qty,0,f.required_qty)||!p.target_plan.some(t=>t.percent===f.percent&&t.qty===f.required_qty))bad();}
   }
   if(day){
@@ -91,8 +94,10 @@ export function validateSaved(s,day=null){
     if(Boolean(day.setups)!==(s.engine_version===2))bad();
     if(s.engine_version===2){
       const setup=day.setups.find(x=>x.id===s.setup_id),x=setup.exit;
+      if(Boolean(s.ws_version)!==(setup.execution==='wealthsimple'))bad();
+      if(s.ws_version===1)validateWSState(s,setup,day,bad);
       if(s.plan.entry!=='discretionary'||s.plan.stop!==x.stop||s.plan.trades!==setup.max_entries)bad();
-      if(p){const n=p.initial_qty,first=x.family==='full'||n===1?n:Math.min(n-1,Math.max(1,Math.floor(n*x.fraction+.5)));
+      if(p&&s.ws_version!==1){const n=p.initial_qty,first=x.family==='full'||n===1?n:Math.min(n-1,Math.max(1,Math.floor(n*x.fraction+.5)));
         const expected=[{percent:x.first,qty:first},...(n>first?[{percent:x.second,qty:n-first}]:[])];
         if(JSON.stringify(p.target_plan)!==JSON.stringify(expected))bad();
       }
@@ -110,6 +115,7 @@ export function validateSaved(s,day=null){
 
 function validateSetup(s){
   if(!s||!/^[a-z0-9_]{1,60}$/.test(s.id)||typeof s.name!=='string'||s.name.length>100||typeof s.description!=='string'||s.description.length>1000||typeof s.caution!=='string'||s.caution.length>1000)fail('invalid setup identity.');
+  if(s.execution==='wealthsimple'){validateWSSetup(s,WS_RULES,fail);return;}
   const e=s.entry,x=s.exit;
   if(s.policy_id!=null&&(typeof s.policy_id!=='string'||s.policy_id.length>150))fail('invalid source policy.');
   if(e?.kind==='union'&&(s.id!=='union_vwap_runner'||e.monitor!=='none'||e.anchor!==0||e.window!==5||x?.post!=='breakeven'||x?.family!=='runner'||x?.first!==25||x?.second!==100||x?.fraction!==.2||x?.stop!==35||x?.grace!==10))fail('unsupported union policy.');
@@ -136,6 +142,7 @@ function validateStageDay(d){
     if(!Array.isArray(q)||q.length!==6||!Number.isInteger(q[0])||q[0]<0||q[0]>=d.menu.length||!Number.isInteger(q[1])||q[1]<0||q[1]>h||q.slice(2).some(v=>!optional(v)||v<0))fail('invalid quote.');
     const key=q[0]*400+q[1];if(seen.has(key))fail('duplicate quote.');seen.add(key);
   }
+  if(d.ws_references!=null)validateWSReferences(d.ws_references,d,fail);
   if(d.benchmarks!=null)validateBenchmarks(d.benchmarks,h);
   if(d.policy_signals!=null){validatePolicySignals(d.policy_signals,m);validateBenchmarks(d.policy_benchmarks,h,true);}
   else if(d.policy_benchmarks!=null)fail('policy inputs missing.');

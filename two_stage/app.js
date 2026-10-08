@@ -1,6 +1,7 @@
 import {localAPI,importPack,backupProgress,restoreProgress,lastSession,sessionKey} from './storage.mjs';
 import {entrySetup,profitSetup} from './signals.mjs';
 import {moneyness,nearStrikes,orderContracts} from './contracts.mjs';
+import {renderWS,wsStartRules,wsBenchmark} from './ws-ui.mjs';
 import {entrySizing} from './policies.mjs';
 import {optionSVG,optionLabel,quoteCaption,windowCaption} from './option-chart.mjs';
 const $ = s => document.querySelector(s);
@@ -22,7 +23,7 @@ async function task(fn){if(busy)return;busy=true;document.body.classList.add('lo
 async function action(kind,extra={}){await task(async()=>{state=await api('/api/action',{id:state.id,revision:state.events.length,action:kind,note:$('#decision-note').value,...extra});if(kind!=='layers')$('#decision-note').value='';render();if(state.finished){await loadHistory();$('#debrief').scrollIntoView({behavior:'smooth'})}})}
 function colored(el,value){el.textContent=money(value);el.classList.toggle('positive',value>0);el.classList.toggle('negative',value<0)}
 
-$('#deal').onclick=()=>task(async()=>{state=await api('/api/new',{previous:state?.id,setup_id:$('#setup-select').value||undefined,layers:presets[$('#start-preset').value],plan:{entry:$('#plan-entry').value,risk:Number($('#plan-risk').value),stop:Number($('#plan-stop').value),trades:3}});localStorage.setItem(sessionKey,state.id);side=state.watchlist?.side||'CALL';selected='';manualSelection='';$('#toast').hidden=true;render();window.scrollTo({top:0,behavior:'smooth'})});
+$('#deal').onclick=()=>task(async()=>{state=await api('/api/new',{previous:state?.id,setup_id:$('#setup-select').value||undefined,quantity:Number($('#ws-quantity').value),delay:Number($('#ws-delay').value),layers:presets[$('#start-preset').value],plan:{entry:$('#plan-entry').value,risk:Number($('#plan-risk').value),stop:Number($('#plan-stop').value),trades:3}});localStorage.setItem(sessionKey,state.id);side=state.watchlist?.side||'CALL';selected='';manualSelection='';$('#toast').hidden=true;render();window.scrollTo({top:0,behavior:'smooth'})});
 $('#next').onclick=()=>action('advance');
 $('#finish').onclick=()=>{finishFocus=document.activeElement;$('#finish-dialog').showModal()};
 $('#cancel-finish').onclick=()=>{$('#finish-dialog').close();finishFocus?.focus()};
@@ -52,7 +53,7 @@ function render(){
   $('#symbol').textContent=state.symbol;$('#session-date').textContent=new Date(state.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})+(state.repeated?' · repeated case':'');
   $('#clock').textContent=time(state.minute);$('#progress-fill').style.width=`${100*state.minute/(state.deadline||390)}%`;
   colored($('#total'),state.total);colored($('#realized'),state.realized);colored($('#unrealized'),state.unrealized);$('#cash').textContent=money(state.cash);$('#entries').textContent=`${state.entries} / ${state.plan.trades}`;
-  $('#next').disabled=state.finished;$('#dock-next').disabled=false;$('#dock-next-label').textContent=state.finished?'Next day →':state.next_minute?'Next → '+time(state.next_minute):'Next 5 min →';$('#finish').disabled=state.finished;$('#dock-clock').textContent=time(state.minute);$('#dock-trade').textContent=state.finished?'Review':state.position?'Exit / runners':'Entry';
+  $('#next').disabled=state.finished||!!state.ws&&state.minute>=state.deadline;$('#dock-next').disabled=false;$('#dock-next-label').textContent=state.finished?'Next day →':state.next_minute?'Next → '+time(state.next_minute):'Next 5 min →';$('#finish').disabled=state.finished;$('#dock-clock').textContent=time(state.minute);$('#dock-trade').textContent=state.finished?'Review':state.position?'Exit / runners':'Entry';
   $$('[data-layer]').forEach(el=>{el.checked=!!state.layers[el.dataset.layer];el.disabled=state.finished});
   $('#last-price').textContent=(state.minute===0?'Open ':'')+money(state.spot);
   $('#next').textContent=state.policy_cards?'Step →':state.next_minute?'Next → '+time(state.next_minute):'Next 5 min →';
@@ -61,7 +62,8 @@ function render(){
   $('[data-layer="model"]').closest('label').hidden=!!state.setup;
   $('#finish-description').textContent=state.setup?`Reveal the remaining candles and close at the ${time(state.deadline)} bid. Missing prices leave P&L unresolved.`:'Reveal the remaining candles and close at the 16:00 bid. Unavailable quotes or depth leave P&L unresolved.';
   chartData=null;chartRequest='';
-  renderPolicyCards();drawChart();drawModel();renderSignals();renderGates();renderFocus();renderContracts();renderPosition();renderDiscipline();renderTape();renderDebrief();
+  renderPolicyCards();drawChart();drawModel();renderSignals();renderGates();renderFocus();renderContracts();renderPosition();renderDiscipline();renderTape();renderDebrief();renderWS(state,action);
+  if(state.ws){$('#dock-trade').textContent=state.finished?'Review':state.position?'Orders':'Entry';if(!state.finished&&state.minute>=state.deadline)$('#dock-next-label').textContent='Close day';}
   $('#save-note').disabled=state.finished;$('#decision-note').disabled=state.finished;
 }
 
@@ -116,11 +118,14 @@ function renderFocus(){
 }
 function renderContracts(keepExpiry=false){
   if(!state)return;
+  const fixed=state.ws?.entry.contract;
+  for(const id of ['calls','puts','expiry','contract'])$('#'+id).disabled=!!state.ws;
+  if(fixed){side=fixed.right;manualSelection=fixed.id;}
   $('#calls').classList.toggle('active',side==='CALL');$('#puts').classList.toggle('active',side==='PUT');
   const all=state.contracts.filter(c=>c.right===side),expiries=[...new Set(all.map(c=>c.expiration))].sort();
   const old=$('#expiry').value;
   $('#expiry').innerHTML=expiries.map(d=>`<option value="${d}">${d}${d===state.date?' · 0DTE':''}</option>`).join('');
-  if(expiries.includes(old))$('#expiry').value=old;
+  if(expiries.includes(fixed?.expiration??old))$('#expiry').value=fixed?.expiration??old;
   const listed=all.filter(c=>c.expiration===$('#expiry').value).sort((a,b)=>a.strike-b.strike);
   const spot=state.spot,near=nearStrikes(listed,spot);
   const contracts=orderContracts(listed,spot,{selected:manualSelection});
@@ -135,9 +140,10 @@ function renderContracts(keepExpiry=false){
 function renderQuote(){
   if(!state)return;
   const c=state.contracts.find(c=>c.id===selected),q=c?.quote;
-  const sized=state.policy_cards&&!state.position,manual=sized?localStorage.getItem(quantityKey()):null;
+  const sized=state.policy_cards&&!state.position&&!state.ws,manual=sized?localStorage.getItem(quantityKey()):null;
   const suggestion=sized?entrySizing(state.setup,q,state.cash):null;
   if(sized){if(manual!==null)$('#quantity').value=manual;else $('#quantity').value=suggestion?.recommended??'';}
+  $('#quantity').disabled=!!state.ws;if(state.ws)$('#quantity').value=state.ws.quantity;
   const qty=Number($('#quantity').value),split=sized?entrySizing(state.setup,q,state.cash,qty):null;
   $('#use-policy-size').hidden=!sized||manual===null;$('#use-policy-size').disabled=!suggestion;$('#use-policy-size').textContent='Use policy size'+(suggestion?' · '+suggestion.recommended:'');
   $('#sizing-preview').hidden=!sized;
@@ -149,9 +155,11 @@ function renderQuote(){
   $('#buy').textContent=q?`Buy ${Number.isInteger(qty)?qty:'…'} at ${money(q.ask)}`:'Buy at ask';
   if(state.setup_signal?.status==='veto'&&q)$('#buy').textContent='Off-plan buy · entry vetoed';
   else if(state.policy_cards&&q&&(state.setup_signal.status!=='ready'||side!==state.watchlist.side||state.entries))$('#buy').textContent='Off-plan buy · '+money(q.ask);
+  if(state.ws){const e=state.ws.entry;$('#buy').disabled=state.finished||!e.can_buy||!!state.position||!q||cost>state.cash;$('#buy').textContent=state.entries?'Entry used':e.can_buy?`Buy ${qty} at ${money(q.ask)}`:e.signal.status==='veto'?'Entry vetoed':e.planned!=null&&state.minute>e.planned+5?'Entry window closed':'Wait for planned buy';$('#cost-preview').innerHTML=q?`Premium <b>${money(cost)}</b> · exactly ${qty} contracts`:'Waiting for current quote.';}
   refreshCharts();
 }
 function renderPosition(){
+  $('#exit-all').textContent='Exit all';
   const p=state.position;$('#entry-form').hidden=!!p;$('#position-form').hidden=!p;$('#position-tag').textContent=p?(p.runner?'RUNNERS':'OPEN'):'FLAT';$('#trade-heading').textContent=p?'Position':'Entry';
   $('#profit-plan b').textContent=state.setup?targetText(state.setup):'+25% → +50% → +75%…';
   $('#profit-plan').hidden=!!p||!state.profit_version;
@@ -182,7 +190,7 @@ function renderDiscipline(){
   $('#checks').innerHTML=state.checks.slice(-6).map(c=>`<div class="check ${c.passed?'':'failed'}"><i>${c.passed?'✓':'!'}</i><span>${escape(c.name)} · ${time(c.minute)}</span></div>`).join('')||'';
 }
 function renderTape(){
-  const events=state.events.filter(e=>['buy','partial','close','note','stop_alert','unknown','gate','profit_target','profit_taken','profit_missed','setup','policy','vwap_unavailable','trend_signal','trend_exit','trend_missed'].includes(e.kind)).slice().reverse();
+  const events=state.events.filter(e=>['buy','partial','close','note','stop_alert','unknown','gate','profit_target','profit_taken','profit_missed','setup','policy','vwap_unavailable','trend_signal','trend_exit','trend_missed','order','order_fill','place_due','deadline'].includes(e.kind)).slice().reverse();
   $('#tape-summary').textContent=`Trades & notes · ${state.fills.length} fills`;
   $('#tape').innerHTML=events.map(e=>`<div class="tape-row"><time>${time(e.minute)}</time><span class="tape-kind">${escape(e.kind.replace('_',' '))}</span><div>${escape(e.note)}${e.price?`<small>${e.qty} × ${money(e.price)}${e.pnl!==undefined?' · '+money(e.pnl):''}</small>`:''}</div></div>`).join('')||'<p class="empty">No trades yet.</p>';
 }
@@ -191,6 +199,7 @@ function renderDebrief(){
   const passed=state.checks.filter(c=>c.passed).length;
   $('#debrief').innerHTML=`<span class="eyebrow">SESSION COMPLETE / ${escape(state.symbol)} / ${state.date}</span><h2>${state.total==null?'Unresolved exposure':'Day complete'}</h2><div class="debrief-metrics"><div><span>DAILY P&L</span><strong class="${state.total>0?'positive':state.total<0?'negative':''}">${money(state.total)}</strong></div><div><span>PLAN CHECKS</span><strong>${state.score==null?'Not scored':state.score+'%'}</strong></div><div><span>ENTRIES</span><strong>${state.entries}</strong></div></div><p>${state.checks.length?`${passed} of ${state.checks.length} applicable checks passed.`:'No entries means no applicable trade-discipline checks.'} ${state.total==null?`Known realized P&L: ${money(state.realized)}. Missing close liquidity is not counted as zero.`:''}</p><div>${state.checks.map(c=>`<div class="check ${c.passed?'':'failed'}"><i>${c.passed?'✓':'!'}</i><span>${time(c.minute)} · ${escape(c.name)}</span></div>`).join('')}</div><button id="another" class="primary">Next day →</button> <button id="replay-day" class="quiet">Replay this day ↻</button>`;
   $('#another').onclick=()=>{$('#game').hidden=true;$('#welcome').hidden=false;$('#mobile-dock').hidden=true;window.scrollTo({top:0,behavior:'smooth'})};
+  if(state.ws_reference)$('#debrief').insertAdjacentHTML('beforeend',wsBenchmark(state));
   if(state.benchmarks?.length)$('#debrief').insertAdjacentHTML('beforeend',benchmarkReview());
   $('#replay-day').onclick=()=>task(async()=>{state=await api('/api/new',{previous:state.id,replay_of:state.id,setup_id:state.setup_id,layers:state.layers,plan:state.plan});localStorage.setItem(sessionKey,state.id);selected='';manualSelection='';render();window.scrollTo({top:0,behavior:'smooth'})});
 }
@@ -253,7 +262,7 @@ function drawChart(){
   for(const b of valid){const color=b.close>=b.open?'#65d9b0':'#ed8191';out+=`<line x1="${x(b.minute)}" x2="${x(b.minute)}" y1="${y(b.high)}" y2="${y(b.low)}" stroke="${color}"/><rect x="${x(b.minute)-cw/2}" y="${Math.min(y(b.open),y(b.close))}" width="${cw}" height="${Math.max(1,Math.abs(y(b.open)-y(b.close)))}" fill="${color}"/>`}
   for(const f of state.fills){const b=bars.findLast(b=>b.minute<=f.minute);if(b?.close!=null){const xx=x(f.minute),yy=y(b.close)+(f.side==='BUY'?13:-13);out+=`<circle cx="${xx}" cy="${yy}" r="6" fill="${f.side==='BUY'?'#65e4b5':'#eac575'}"/><text x="${xx}" y="${yy+2.5}" text-anchor="middle" fill="#09251d" font-size="7" font-weight="bold">${f.side==='BUY'?'B':'S'}</text>`}}
   if(state.policy_cards){
-    const names={union_vwap_runner:'U',stock_reclaim_exit_vwap_5m_2:'R',qqq_premium_pm_veto:'Q',fixed10_budget:'10'};
+    const names={ws_p08:'P08',ws_p05:'P05',ws_p09:'P09',union_vwap_runner:'U',stock_reclaim_exit_vwap_5m_2:'R',qqq_premium_pm_veto:'Q',fixed10_budget:'10'};
     for(const e of state.events.filter(e=>e.kind==='policy'&&['alert','ready','veto'].includes(e.status))){
       const b=bars.findLast(b=>b.minute<=e.minute);if(!b?.close)continue;
       const xx=x(e.minute),yy=top+12+(Object.keys(names).indexOf(e.policy_id)%2)*15,color=e.status==='veto'?'#ed8191':e.policy_id===state.setup_id?'#65e4b5':'#8396ac';
@@ -329,7 +338,7 @@ $('#pack-file').onchange=()=>{const file=$('#pack-file').files[0];if(!file)retur
 });};
 $('#backup-progress').onclick=()=>task(async()=>downloadJSON(await backupProgress(),'two-stage-progress-'+new Date().toISOString().slice(0,10)+'.json'));
 $('#restore-file').onchange=()=>{const file=$('#restore-file').files[0];if(!file)return;task(async()=>{try{const result=await restoreProgress(file);await loadHistory();$('#restore-status').textContent=`${result.added} rounds restored · ${result.kept} existing rounds kept`;toast('Progress restored. Open Sessions to resume a round.');}catch(error){$('#restore-status').textContent=error.message;throw error;}finally{$('#restore-file').value='';}})};
-$('#dock-next').onclick=()=>state.finished?$('#another').click():action('advance');
+$('#dock-next').onclick=()=>state.finished?$('#another').click():state.ws&&state.minute>=state.deadline?$('#finish').click():action('advance');
 $('#dock-trade').onclick=()=>(state.finished?$('#debrief'):$('.trade-panel')).scrollIntoView({behavior:'smooth',block:'start'});
 $('#dock-options').onclick=()=>$('#options-panel').scrollIntoView({behavior:'smooth',block:'start'});
 $('#dock-chart').onclick=()=>(state.policy_cards?$('.chart-panel'):$('.signal-focus')).scrollIntoView({behavior:'smooth',block:'start'});
@@ -347,7 +356,7 @@ function targetText(setup){const x=setup.exit;return x.family==='full'?`All at +
 function renderLibrary(){
   const old=$('#setup-select').value,pack=library.pack,modern=pack?.version===2;
   $('#pack-control').hidden=library.packs.length<2;
-  $('#pack-select').innerHTML=library.packs.map(p=>`<option value="${p.id}">${escape(p.name)}${p.name.startsWith('Four setups')?'':' · legacy / reference'}</option>`).join('');$('#pack-select').value=pack?.id||'';
+  $('#pack-select').innerHTML=library.packs.map(p=>`<option value="${p.id}">${escape(p.name)}${(p.name.startsWith('Four setups')||p.name.startsWith('Wealthsimple'))?'':' · legacy / reference'}</option>`).join('');$('#pack-select').value=pack?.id||'';
   $('#setup-control').hidden=!modern;$('#setup-brief').hidden=!modern;$('#legacy-entry').hidden=modern;$('#legacy-risk').hidden=modern;
   $('#setup-select').innerHTML=modern?pack.setups.map(s=>`<option value="${s.id}">${escape(s.name)}</option>`).join(''):'';
   if(modern)$('#setup-select').value=pack.setups.some(s=>s.id===old)?old:pack.default_setup;
@@ -356,7 +365,9 @@ function renderLibrary(){
 function renderSetupPlan(){
   const setup=library?.pack?.setups?.find(s=>s.id===$('#setup-select').value);
   $('#setup-brief').textContent=setup?setup.description:'';
+  $('#ws-start').hidden=setup?.execution!=='wealthsimple';
   $('#start-rules').textContent=setup?`${money(setup.budget)} cap · max ${setup.max_contracts} contracts · one entry. ${targetText(setup)}. −${setup.exit.stop}% stop after ${Math.max(1,setup.exit.grace)}m. Close ${time(setup.deadline)}.`:'$20,000 paper account · 3 entries / day. Take some profit at +25%, +50%, +75%…';
+  if(setup?.execution==='wealthsimple')$('#start-rules').textContent=wsStartRules(setup,Number($('#ws-quantity').value));
 }
 function renderPolicyCards(){
   const cards=state.policy_cards;
@@ -365,7 +376,7 @@ function renderPolicyCards(){
   if(!cards)return;
   $('#watch-context').textContent=`09:00 watchlist · #${state.watchlist.rank} of 3 · ${state.watchlist.side} · practice: ${state.setup.name}`;
   $('#policy-cards').innerHTML=cards.map(c=>`<article class="policy-card ${c.selected?'selected ':''}${escape(c.status)}" aria-label="${escape(c.name)}"><div class="policy-title"><b>${escape(c.name)}</b>${c.selected?'<span>YOU</span>':''}</div><strong class="policy-status">${escape(c.label)}</strong><p>${escape(c.detail)}</p></article>`).join('');
-  const events=state.events.filter(e=>['policy','buy','partial','close','profit_target','stop_alert','trend_signal','unknown'].includes(e.kind)).slice(-2);
+  const events=state.events.filter(e=>['policy','buy','partial','close','profit_target','stop_alert','trend_signal','unknown','order','order_fill','place_due','deadline'].includes(e.kind)).slice(-2);
   $('#current-events').innerHTML=events.map(e=>`<div><time>${time(e.minute)}</time><span>${escape(e.kind==='policy'?e.note.split('. ')[0]:e.note)}</span></div>`).join('')||'<span>Step up to five minutes. Entry and exit signals pause the clock.</span>';
 }
 function renderStageCards(){
@@ -377,5 +388,6 @@ function renderStageCards(){
   $('#trend-focus').innerHTML=`<div class="focus-label">02 · SETUP</div><div class="focus-value"><strong>${s.entry_minute!=null?time(s.entry_minute):e.kind==='clock'?time(e.anchor):status}</strong><span>${s.entry_minute!=null?status:''}</span></div><div class="focus-caption">${s.monitor?escape(s.monitor.strike+' '+s.monitor.right)+' · reference '+money(s.reference):s.reference!=null?'Reclaim '+money(s.reference):escape(state.setup.name)}</div>`;
   if(s.entry_veto)$('#trend-focus .focus-caption').textContent=s.entry_veto.veto?'2 × 5m own-VWAP conflicts · no retry':s.entry_veto.available?'VWAP entry veto clear':'VWAP unavailable · parent rule';
 }
+$('#ws-quantity').onchange=renderSetupPlan;
 $('#setup-select').onchange=renderSetupPlan;
 $('#pack-select').onchange=()=>task(async()=>{await api('/api/pack',{id:$('#pack-select').value});await loadHistory();toast('Replay pack selected for the next round.');});

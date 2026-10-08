@@ -69,7 +69,18 @@ export function chartEvidence(game,{contract='',width=5}={}){
   const traded=!p&&s.fills.some(f=>f.side==='BUY'&&f.contract===id&&f.minute<=minute);
   if(trade)trade.role=p?'setup-position':traded?'setup-traded':'setup-selected';
   else {trade=series(id,p?'position':traded?'traded':'selected');if(trade)charts.push(trade);}
-  if(trade&&p){
+  if(trade&&p&&s.ws_version===1){
+    const b=s.ws.book,r=b.rule;
+    trade.lines.push({price:p.entry,label:'Entry ask',start:p.entry_minute,kind:'entry'});
+    for(const g of b.groups.filter(g=>g.qty)){
+      const prefix=`G${g.id+1} ×${g.qty} · `,unplaced=g.active==='none';
+      const target=g.active==='target'||unplaced&&g.role<2;
+      const level=unplaced?b.entry*(g.role<2?1+(g.role===0?r.first:r.second):1-r.stop):g.level;
+      trade.lines.push({price:level,label:prefix+(unplaced?'Unplaced ':'')+(target?'target':g.active==='limit'?'triggered limit':'stop trigger'),start:unplaced?b.entry_minute:Math.min(g.activation,s.minute),kind:target?'target':'stop',active:true});
+      if(g.active==='stoplimit'||unplaced&&g.role===2)trade.lines.push({price:b.entry*(1-r.stop-(r.kind===2?.05:0)),label:prefix+'limit',start:b.entry_minute,kind:'stop',active:true});
+      if(g.pending&&g.pending.kind!=='cancel')trade.lines.push({price:b.entry*(g.pending.kind==='breakeven'?1:1-r.stop),label:prefix+'pending '+g.pending.kind+' @ '+`${String(Math.floor((570+g.pending.due)/60)).padStart(2,'0')}:${String((570+g.pending.due)%60).padStart(2,'0')}`,start:s.minute,kind:'stop',active:true});
+    }
+  }else if(trade&&p){
     trade.lines.push({price:p.entry,label:'Entry ask',start:p.entry_minute,kind:'entry'});
     const x=setup?.exit,targets=x?(x.family==='full'?[x.first]:[x.first,x.second]):[25,50,75,100];
     for(const percent of targets)trade.lines.push({price:p.entry*(1+percent/100),label:'+'+percent+'%',start:p.entry_minute,kind:'target'});
