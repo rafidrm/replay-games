@@ -1,19 +1,21 @@
 export const digest=async text=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(x=>x.toString(16).padStart(2,'0')).join('');
-const keyPattern=/^\d{4}-\d{2}-\d{2}_[A-Z0-9.-]+@[123]$/;
+const keyPattern=/^\d{4}-\d{2}-\d{2}_[A-Z0-9.-]+@[1234]$/;
 const finite=v=>typeof v==='number'&&Number.isFinite(v);
 const optional=v=>v===null||finite(v);
 const fail=message=>{throw Error('Invalid replay pack: '+message);};
 export async function validateManifest(m){
-  if(m?.format!=='two-stage-replay'||m.version!==1)fail('unsupported format.');
+  if(m?.format!=='two-stage-replay'||![1,2].includes(m.version))fail('unsupported format.');
   if(!Array.isArray(m.records)||m.records.length<1||m.records.length>2000||!Array.isArray(m.cases)||!m.cases.length)fail('bad case list.');
   const keys=new Set();
   for(const r of m.records){if(!keyPattern.test(r.key)||!/^([a-f0-9]{64})$/.test(r.sha256)||keys.has(r.key))fail('bad record index.');keys.add(r.key);}
-  if(m.cases.some(k=>!keys.has(k)||!k.endsWith('@3'))||new Set(m.cases).size!==m.cases.length)fail('bad playable cases.');
-  if(await digest(JSON.stringify(m.records))!==m.id)fail('manifest checksum mismatch.');
+  if(m.cases.some(k=>!keys.has(k)||!k.endsWith(m.version===2?'@4':'@3'))||new Set(m.cases).size!==m.cases.length)fail('bad playable cases.');
+  if(m.version===2){if(!Array.isArray(m.setups)||!m.setups.length||m.setups.length>30)fail('bad setups.');for(const setup of m.setups)validateSetup(setup);if(new Set(m.setups.map(s=>s.id)).size!==m.setups.length||!m.setups.some(s=>s.id===m.default_setup))fail('bad default setup.');}
+  if(await digest(JSON.stringify(m.version===2?{records:m.records,setups:m.setups,default_setup:m.default_setup}:m.records))!==m.id)fail('manifest checksum mismatch.');
   if(typeof m.name!=='string'||m.name.length>100)fail('bad name.');
   return m;
 }
 export function validateDay(d){
+  if(d?.format_version===2)return validateStageDay(d);
   if(!keyPattern.test(d?.key)||!d.meta||d.key!==`${d.meta.case_id}@${d.menu_version}`)fail('day identity mismatch.');
   const m=d.meta;
   if(m.case_id!==`${m.date}_${m.symbol}`||!/^\d{4}-\d{2}-\d{2}$/.test(m.date)||!/^[A-Z0-9.-]{1,16}$/.test(m.symbol))fail('invalid date or ticker.');
@@ -61,9 +63,9 @@ export async function* packLines(file){
 export function validateSaved(s,day=null){
   const bad=()=>{throw Error('Invalid progress backup. The saved round is inconsistent.');};
   const whole=(v,lo,hi)=>Number.isInteger(v)&&v>=lo&&v<=hi;
-  const clock=v=>whole(v,0,s.minute)&&v%5===0;
+  const clock=v=>whole(v,0,s.minute)&&(s.engine_version===2||v%5===0);
   const layers=v=>v&&typeof v==='object'&&['vwap','ema','volume','levels','detector'].every(k=>typeof v[k]==='boolean')&&(v.model==null||typeof v.model==='boolean');
-  if(!s||!/^[a-f0-9]{32}$/.test(s.id)||!whole(s.minute,0,390)||s.minute%5||!finite(s.cash)||s.cash<0||!finite(s.realized)||typeof s.finished!=='boolean'||!whole(s.entries,0,10000))bad();
+  if(!s||!/^[a-f0-9]{32}$/.test(s.id)||!whole(s.minute,0,390)||(s.engine_version!==2&&s.minute%5)||!finite(s.cash)||s.cash<0||!finite(s.realized)||typeof s.finished!=='boolean'||!whole(s.entries,0,10000))bad();
   if(!layers(s.layers)||!s.plan||!['retest','retest_ema','discretionary'].includes(s.plan.entry)||!whole(s.plan.risk,1,10)||!whole(s.plan.stop,5,90)||!whole(s.plan.trades,1,20))bad();
   if(typeof s.created_at!=='string'||!Number.isFinite(Date.parse(s.created_at))||!s.liquidity||typeof s.liquidity!=='object'||Object.values(s.liquidity).some(v=>!whole(v,0,1000000)))bad();
   for(const key of ['events','fills','checks','layer_history'])if(!Array.isArray(s[key])||s[key].length>20000)bad();
@@ -77,10 +79,15 @@ export function validateSaved(s,day=null){
     let previous=0;
     if(p.profit_flags!=null){
       if(!Array.isArray(p.profit_flags)||p.profit_flags.length>10000)bad();
-      for(const f of p.profit_flags){if(!whole(f.percent,previous+25,250000)||f.percent%25||!clock(f.minute)||!['due','missed','taken','late'].includes(f.status)||(f.taken_minute!=null&&!clock(f.taken_minute))||(f.qty!=null&&!whole(f.qty,1,1000)))bad();previous=f.percent;}
+      for(const f of p.profit_flags){if(!whole(f.percent,previous+(s.engine_version===2?1:25),250000)||(s.engine_version!==2&&f.percent%25)||!clock(f.minute)||!['due','missed','taken','late'].includes(f.status)||(f.taken_minute!=null&&!clock(f.taken_minute))||(f.qty!=null&&!whole(f.qty,1,1000)))bad();previous=f.percent;}
     }
   }
+  if(s.engine_version===2){
+    if(typeof s.setup_id!=='string'||(p&&(!Array.isArray(p.target_plan)||p.target_plan.length<1||p.target_plan.length>2||p.target_plan.some(t=>!whole(t.percent,1,1000)||!whole(t.qty,1,1000)))))bad();
+    if(p)for(const f of p.profit_flags){if(!whole(f.required_qty,1,1000)||!whole(f.taken_qty,0,f.required_qty)||!p.target_plan.some(t=>t.percent===f.percent&&t.qty===f.required_qty))bad();}
+  }
   if(day){
+    if(s.engine_version===2&&(!day.setups?.some(x=>x.id===s.setup_id)||s.minute>day.deadline))bad();
     if(s.case_id!==day.meta.case_id||(s.menu_version??1)!==day.menu_version)bad();
     const contracts=new Map(day.menu.map(c=>[c.id,c]));
     if(s.fills.some(f=>!contracts.has(f.contract)))bad();
@@ -90,4 +97,30 @@ export function validateSaved(s,day=null){
     }
   }
   return s;
+}
+
+function validateSetup(s){
+  if(!s||!/^[a-z0-9_]{1,60}$/.test(s.id)||typeof s.name!=='string'||s.name.length>100||typeof s.description!=='string'||s.description.length>1000||typeof s.caution!=='string'||s.caution.length>1000)fail('invalid setup identity.');
+  const e=s.entry,x=s.exit;
+  if(!e||!['clock','adverse','reclaim'].includes(e.kind)||!['none','stock','premium'].includes(e.monitor)||!Number.isInteger(e.anchor)||e.anchor<0||e.anchor>300||!Number.isInteger(e.window)||(e.kind==='clock'?e.window!==0||e.monitor!=='none':e.window<1||e.window>5||e.monitor==='none'))fail('invalid entry rule.');
+  if(!x||!['runner','full'].includes(x.family)||!Number.isInteger(x.first)||x.first<1||x.first>1000||!Number.isInteger(x.second)||x.second<x.first||x.second>1000||!finite(x.fraction)||x.fraction<=0||x.fraction>1||!Number.isInteger(x.stop)||x.stop<5||x.stop>90||!Number.isInteger(x.grace)||x.grace<0||x.grace>60)fail('invalid exit rule.');
+  if(!finite(s.budget)||s.budget<1||s.budget>20000||!Number.isInteger(s.max_contracts)||s.max_contracts<1||s.max_contracts>1000||s.max_entries!==1||s.deadline!==330)fail('invalid setup limits.');
+}
+function validateStageDay(d){
+  const m=d.meta,h=d.deadline;
+  if(!m||d.menu_version!==4||!keyPattern.test(d.key)||d.key!==`${m.case_id}@4`||m.case_id!==`${m.date}_${m.symbol}`||!/^\d{4}-\d{2}-\d{2}$/.test(m.date)||!/^[A-Z0-9.-]{1,16}$/.test(m.symbol)||h!==330)fail('invalid Stage 2 identity.');
+  if(!['CALL','PUT'].includes(m.morning_side)||!Number.isInteger(m.rank)||m.rank<1||m.rank>3||!finite(m.watch_score)||m.watch_score<0||m.watch_score>1||typeof m.watchlist!=='string'||m.watchlist.length>100)fail('invalid watchlist.');
+  for(const k of ['session_open','previous_close','premarket_high','premarket_low'])if(!optional(m[k]))fail('invalid levels.');
+  if(!Array.isArray(d.bars)||d.bars.length!==h/5||!Array.isArray(d.underlying)||d.underlying.length!==h||!Array.isArray(d.forecasts)||d.forecasts.length)fail('invalid clocks.');
+  for(const [i,b] of d.bars.entries()){if(b.minute!==(i+1)*5)fail('invalid candle clock.');for(const k of ['open','high','low','close','volume','vwap','ema8','ema21'])if(!optional(b[k]))fail('invalid candle.');}
+  for(const [i,b] of d.underlying.entries()){if(b.minute!==i)fail('invalid minute clock.');for(const k of ['open','high','low','close','volume','vwap'])if(!optional(b[k]))fail('invalid minute.');}
+  if(!Array.isArray(d.selection_strikes)||!d.selection_strikes.length||d.selection_strikes.some(k=>!finite(k)||k<=0)||!/^\d{4}-\d{2}-\d{2}$/.test(d.expiration))fail('invalid contract selection.');
+  if(!Array.isArray(d.menu)||d.menu.length>20000||!Array.isArray(d.quotes)||d.quotes.length>1600000)fail('invalid quote table.');
+  const ids=new Set(),seen=new Set();
+  for(const c of d.menu){if(typeof c.id!=='string'||!/^[0-9.|A-Z-]{1,80}$/.test(c.id)||ids.has(c.id)||!['CALL','PUT'].includes(c.right)||!finite(c.strike)||c.strike<=0||!/^\d{4}-\d{2}-\d{2}$/.test(c.expiration)||!Number.isInteger(c.listed_minute)||c.listed_minute<0||c.listed_minute>h)fail('invalid contract.');ids.add(c.id);}
+  for(const q of d.quotes){
+    if(!Array.isArray(q)||q.length!==6||!Number.isInteger(q[0])||q[0]<0||q[0]>=d.menu.length||!Number.isInteger(q[1])||q[1]<0||q[1]>h||q.slice(2).some(v=>!optional(v)||v<0))fail('invalid quote.');
+    const key=q[0]*400+q[1];if(seen.has(key))fail('duplicate quote.');seen.add(key);
+  }
+  return d;
 }

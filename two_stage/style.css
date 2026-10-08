@@ -47,3 +47,5 @@ html{scroll-padding-top:18px}button,input,select{touch-action:manipulation}butto
   .signal-focus{grid-template-columns:repeat(2,minmax(0,1fr))}.focus-card{padding:10px}.focus-label{font-size:9px;min-height:0}.focus-value strong{font-size:20px}.focus-value>span,.focus-value .focus-status{font-size:10px}.focus-chip,.focus-caption{font-size:11px}.focus-chips{gap:4px 8px}
   #entry-focus{grid-column:1/-1;display:grid;grid-template-columns:1fr auto;gap:5px 10px;align-items:center}#entry-focus .focus-label{grid-column:1;grid-row:1}#entry-focus .focus-value{grid-column:2;grid-row:1;margin:0;justify-content:flex-end}#entry-focus .focus-chips,#entry-focus .focus-caption{grid-column:1/-1;grid-row:2}#entry-focus .focus-value strong{font-size:19px}
 }
+
+#setup-name{display:block;margin-top:7px;color:var(--muted,#8396ac);font-size:11px;font-weight:500}#setup-name[hidden]{display:none}#setup-brief{line-height:1.5}#pack-control{margin-bottom:16px}

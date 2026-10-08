@@ -1,4 +1,4 @@
-import {Day,Game} from './engine.mjs';
+import {createDay,createGame} from './stage2.mjs';
 import {digest,validateDay,validateManifest,validateSaved,packLines} from './pack.mjs';
 
 const scope=new URL('.',location.href).pathname;
@@ -31,7 +31,7 @@ async function dayFor(record){
   const key=record.pack_id+':'+record.day_key;
   if(!dayCache.has(key)){
     const row=await read('days',key);if(!row)throw Error('Import the original replay pack to resume this round.');
-    dayCache.clear();dayCache.set(key,new Day(row.data));
+    const pack=await read('packs',record.pack_id);dayCache.clear();dayCache.set(key,createDay(row.data,pack.manifest));
   }
   return dayCache.get(key);
 }
@@ -41,27 +41,29 @@ export async function localAPI(path,params){
   const url=new URL(path,'https://local.invalid');
   if(url.pathname==='/api/info'){
     const pack=await active(),sessions=await all('sessions');
-    return {cases:pack?.manifest.cases.length??0,pack:pack?.manifest??null,history:sessions.map(s=>s.summary).sort((a,b)=>b.created_at.localeCompare(a.created_at))};
+    return {cases:pack?.manifest.cases.length??0,pack:pack?.manifest??null,packs:(await all('packs')).map(p=>({id:p.id,name:p.manifest.name,cases:p.manifest.cases.length})),history:sessions.map(s=>s.summary).sort((a,b)=>b.created_at.localeCompare(a.created_at))};
   }
+  if(url.pathname==='/api/pack'){const pack=await read('packs',params.id);if(!pack)throw Error('Replay pack not found.');await put('settings',{id:'active-pack',value:pack.id});return {ok:true};}
   if(url.pathname==='/api/state'||url.pathname==='/api/export'){
     const record=await read('sessions',url.searchParams.get('id'));if(!record)throw Error('Saved session not found');
-    const game=new Game(await dayFor(record),{saved:record.state});
+    const game=createGame(await dayFor(record),{saved:record.state});
     return url.pathname==='/api/state'?game.view():{state:game.view(),summary:game.summary(),pack_id:record.pack_id};
   }
   if(url.pathname==='/api/new'){
     if(params.previous){const previous=await read('sessions',params.previous);if(previous&&!previous.state.finished)throw Error('Finish the current session before dealing another day.');}
-    const pack=await active();if(!pack)throw Error('Import your replay pack first.');
-    const history=await all('sessions'),used=new Set(history.map(s=>s.state.case_id));
+    let pack=await active();const original=params.replay_of?await read('sessions',params.replay_of):null;if(original)pack=await read('packs',original.pack_id);if(!pack)throw Error('Import your replay pack first.');
+    const history=await all('sessions'),setup=original?.state.setup_id??params.setup_id??pack.manifest.default_setup;
+    const used=new Set(history.filter(s=>s.pack_id===pack.id&&(pack.manifest.version!==2||s.state.setup_id===setup)).map(s=>s.state.case_id));
     const fresh=pack.manifest.cases.filter(k=>!used.has(k.split('@')[0]));
     let key=choose(fresh.length?fresh:pack.manifest.cases);
-    if(params.replay_of){const original=await read('sessions',params.replay_of);if(!original?.state.finished)throw Error('Only completed sessions can be replayed.');key=original.state.case_id+'@3';if(!pack.manifest.cases.includes(key))throw Error('That day is not in this replay pack.');}
-    const game=new Game(await dayFor({pack_id:pack.id,day_key:key}),{layers:params.layers,plan:params.plan});game.s.repeated=used.has(game.s.case_id);
+    if(params.replay_of){if(!original?.state.finished)throw Error('Only completed sessions can be replayed.');key=original.state.case_id+(pack.manifest.version===2?'@4':'@3');if(!pack.manifest.cases.includes(key))throw Error('That day is not in this replay pack.');}
+    const game=createGame(await dayFor({pack_id:pack.id,day_key:key}),{layers:params.layers,plan:params.plan,setup_id:setup});game.s.repeated=used.has(game.s.case_id);
     await save(toRecord(game,pack.id,key),null);return game.view();
   }
   if(url.pathname==='/api/action'){
     const record=await read('sessions',params.id);if(!record)throw Error('Saved session not found');
     if(params.revision!==record.state.events.length)throw Error('This round changed in another tab. Reload to resume it.');
-    const game=new Game(await dayFor(record),{saved:record.state});game.act(params);
+    const game=createGame(await dayFor(record),{saved:record.state});game.act(params);
     await save(toRecord(game,record.pack_id,record.day_key),params.revision);return game.view();
   }
   throw Error('Unknown local action');
@@ -73,7 +75,7 @@ export async function importPack(file,progress=()=>{}){
     for await(const line of packLines(file)){
       if(!manifest){manifest=await validateManifest(JSON.parse(line));progress(0,manifest.records.length);continue;}
       const expected=manifest.records[index];if(!expected||await digest(line)!==expected.sha256)throw Error('Replay checksum mismatch. Import was stopped; your previous library is unchanged.');
-      const day=validateDay(JSON.parse(line));if(day.key!==expected.key||received.has(day.key))throw Error('Replay record identity mismatch.');
+      const day=validateDay(JSON.parse(line));if((day.format_version===2)!==(manifest.version===2))throw Error('Replay version mismatch.');if(day.key!==expected.key||received.has(day.key))throw Error('Replay record identity mismatch.');
       await put('days',{id:manifest.id+':'+day.key,data:day});received.add(day.key);index++;progress(index,manifest.records.length);
     }
     if(!manifest||index!==manifest.records.length)throw Error('Incomplete replay pack. Your previous library is unchanged.');
@@ -93,7 +95,7 @@ export async function restoreProgress(file){
     validateSaved(row.state);if(row.id!==row.state.id||ids.has(row.id))throw Error('Duplicate saved round.');ids.add(row.id);
     const pack=await read('packs',row.pack_id);if(!pack||!pack.manifest.records.some(r=>r.key===row.day_key))throw Error('Import the matching replay pack before restoring progress.');
     const day=await dayFor(row);validateSaved(row.state,day);
-    const game=new Game(day,{saved:row.state});prepared.push(toRecord(game,row.pack_id,row.day_key));
+    const game=createGame(day,{saved:row.state});prepared.push(toRecord(game,row.pack_id,row.day_key));
   }
   const db=await database;let added=0,kept=0;
   await new Promise((resolve,reject)=>{
