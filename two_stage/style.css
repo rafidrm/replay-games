@@ -49,3 +49,5 @@ html{scroll-padding-top:18px}button,input,select{touch-action:manipulation}butto
 }
 
 #setup-name{display:block;margin-top:7px;color:var(--muted,#8396ac);font-size:11px;font-weight:500}#setup-name[hidden]{display:none}#setup-brief{line-height:1.5}#pack-control{margin-bottom:16px}
+
+.benchmark-review{margin-top:24px;border-top:1px solid var(--border);padding-top:14px}.benchmark-review h3{margin:4px 0 10px;font-size:15px}.benchmark-row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:12px;line-height:1.5}.benchmark-row small{display:block;color:var(--muted);margin-top:3px}.benchmark-row b{white-space:nowrap;font-variant-numeric:tabular-nums}.benchmark-review details{margin-top:14px;font-size:12px}.benchmark-path{padding:12px 0}.benchmark-path p{margin:4px 0}

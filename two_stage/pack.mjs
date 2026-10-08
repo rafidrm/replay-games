@@ -111,13 +111,14 @@ export function validateSaved(s,day=null){
 function validateSetup(s){
   if(!s||!/^[a-z0-9_]{1,60}$/.test(s.id)||typeof s.name!=='string'||s.name.length>100||typeof s.description!=='string'||s.description.length>1000||typeof s.caution!=='string'||s.caution.length>1000)fail('invalid setup identity.');
   const e=s.entry,x=s.exit;
+  if(s.overlay!=null&&(!['entry_vwap_5m_2','exit_vwap_5m_2'].includes(s.overlay)||s.parent_setup!=='stock_reclaim'||e?.kind!=='reclaim'||e?.monitor!=='stock'||e?.anchor!==60||e?.window!==3||x?.family!=='full'||x?.first!==50||x?.second!==50||x?.fraction!==1||x?.stop!==25||x?.grace!==10))fail('unsupported reclaim overlay.');
   if(!e||!['clock','adverse','reclaim'].includes(e.kind)||!['none','stock','premium'].includes(e.monitor)||!Number.isInteger(e.anchor)||e.anchor<0||e.anchor>300||!Number.isInteger(e.window)||(e.kind==='clock'?e.window!==0||e.monitor!=='none':e.window<1||e.window>5||e.monitor==='none'))fail('invalid entry rule.');
   if(!x||!['runner','full'].includes(x.family)||!Number.isInteger(x.first)||x.first<1||x.first>1000||!Number.isInteger(x.second)||x.second<x.first||x.second>1000||!finite(x.fraction)||x.fraction<=0||x.fraction>1||!Number.isInteger(x.stop)||x.stop<5||x.stop>90||!Number.isInteger(x.grace)||x.grace<0||x.grace>60)fail('invalid exit rule.');
   if(!finite(s.budget)||s.budget<1||s.budget>20000||!Number.isInteger(s.max_contracts)||s.max_contracts<1||s.max_contracts>1000||s.max_entries!==1||s.deadline!==330)fail('invalid setup limits.');
 }
 function validateStageDay(d){
   const m=d.meta,h=d.deadline;
-  if(!m||d.menu_version!==4||!keyPattern.test(d.key)||d.key!==`${m.case_id}@4`||m.case_id!==`${m.date}_${m.symbol}`||!/^\d{4}-\d{2}-\d{2}$/.test(m.date)||!/^[A-Z0-9.-]{1,16}$/.test(m.symbol)||h!==330)fail('invalid Stage 2 identity.');
+  if(!m||d.menu_version!==4||!keyPattern.test(d.key)||d.key!==`${m.case_id}@4`||m.case_id!==`${m.date}_${m.symbol}`||!/^\d{4}-\d{2}-\d{2}$/.test(m.date)||!/^[A-Z0-9.-]{1,16}$/.test(m.symbol)||!Number.isInteger(h)||h<95||h>330||h%5)fail('invalid Stage 2 identity.');
   if(!['CALL','PUT'].includes(m.morning_side)||!Number.isInteger(m.rank)||m.rank<1||m.rank>3||!finite(m.watch_score)||m.watch_score<0||m.watch_score>1||typeof m.watchlist!=='string'||m.watchlist.length>100)fail('invalid watchlist.');
   for(const k of ['session_open','previous_close','premarket_high','premarket_low'])if(!optional(m[k]))fail('invalid levels.');
   if(!Array.isArray(d.bars)||d.bars.length!==h/5||!Array.isArray(d.underlying)||d.underlying.length!==h||!Array.isArray(d.forecasts)||d.forecasts.length)fail('invalid clocks.');
@@ -131,5 +132,21 @@ function validateStageDay(d){
     if(!Array.isArray(q)||q.length!==6||!Number.isInteger(q[0])||q[0]<0||q[0]>=d.menu.length||!Number.isInteger(q[1])||q[1]<0||q[1]>h||q.slice(2).some(v=>!optional(v)||v<0))fail('invalid quote.');
     const key=q[0]*400+q[1];if(seen.has(key))fail('duplicate quote.');seen.add(key);
   }
+  if(d.benchmarks!=null)validateBenchmarks(d.benchmarks,h);
   return d;
+}
+
+function validateBenchmarks(rows,deadline){
+  if(!Array.isArray(rows)||rows.length!==6)fail('invalid benchmarks.');
+  const seen=new Set();
+  for(const b of rows){
+    if(!['stock_reclaim','stock_reclaim_exit_vwap_5m_2','stock_reclaim_entry_vwap_5m_2'].includes(b.setup_id)||!['cap2000_max10','lots2'].includes(b.profile)||seen.has(b.setup_id+':'+b.profile))fail('invalid benchmark identity.');
+    seen.add(b.setup_id+':'+b.profile);
+    if(typeof b.eligible!=='boolean'||typeof b.resolved!=='boolean'||typeof b.veto!=='boolean'||!Number.isInteger(b.n)||b.n<0||b.n>10||!finite(b.debit)||b.debit<0||!optional(b.pnl)||!optional(b.lower)||!optional(b.upper)||typeof b.status!=='string'||b.status.length>80||!Array.isArray(b.events)||b.events.length>3)fail('invalid benchmark accounting.');
+    if(!b.eligible&&(b.n!==0||b.debit!==0||b.events.length)||b.veto&&(b.eligible||b.pnl!==0))fail('veto or cash benchmark has trades.');
+    if(b.eligible&&(!Number.isInteger(b.entry_minute)||b.entry_minute<0||b.entry_minute>=deadline||!['CALL','PUT'].includes(b.side)||!finite(b.strike)||b.strike<=0||!/^\d{4}-\d{2}-\d{2}$/.test(b.expiration)||b.n<1||b.debit<=0))fail('invalid benchmark entry.');
+    let sold=0,last=b.entry_minute;
+    for(const ev of b.events){if(!Array.isArray(ev)||ev.length!==5||!Number.isInteger(ev[0])||ev[0]<=b.entry_minute||ev[0]<last||ev[0]>deadline||!Number.isInteger(ev[1])||ev[1]<1||!finite(ev[2])||ev[2]<=0||!['target','stop','deadline','trend_exit'].includes(ev[3])||![-1,0,1].includes(ev[4]))fail('invalid benchmark sale.');sold+=ev[1];last=ev[0];}
+    if(sold>b.n||b.resolved&&(sold!==b.n||!finite(b.pnl)||Math.abs(-b.debit+b.events.reduce((n,e)=>n+100*e[1]*e[2],0)-b.pnl)>1e-6))fail('benchmark cashflow mismatch.');
+  }
 }

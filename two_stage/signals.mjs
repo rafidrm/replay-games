@@ -1,6 +1,6 @@
 // Entry readiness uses only the information exposed at the replay clock.
 export function entrySetup(state, side) {
-  if(state.setup){const ready=state.setup_signal.status==='ready'&&side===state.watchlist.side;return {ready,label:ready?side+' setup':state.setup_signal.status==='missed'?'Entry passed':'Waiting',requirements:[{name:'Setup clock',passed:state.setup_signal.status==='ready'},{name:state.watchlist.side+' direction',passed:side===state.watchlist.side}]};}
+  if(state.setup){const s=state.setup_signal,ready=s.status==='ready'&&side===state.watchlist.side;return {ready,label:s.status==='veto'?'Stay in cash':ready?side+' setup':s.status==='missed'?'Entry passed':'Waiting',requirements:[{name:'Setup clock',passed:s.status==='ready'},{name:state.watchlist.side+' direction',passed:side===state.watchlist.side},...(s.entry_veto?[{name:s.entry_veto.available?'VWAP veto clear':'VWAP unavailable · parent rule',passed:s.entry_veto.available?!s.entry_veto.veto:null}]:[])]};}
   const requirements=[{name:'Trend gate',passed:state.gate_passed}];
   if(state.plan.entry!=='discretionary')requirements.push({name:'VWAP retest',passed:state.layers.vwap?state.signals.retest===side:null});
   if(state.plan.entry==='retest_ema')requirements.push({name:'EMA aligned',passed:state.layers.ema?state.signals.ema===side:null});

@@ -1,4 +1,5 @@
 import {Day,Game,DEFAULT_LAYERS} from './engine.mjs';
+import {entryVeto,exitSignal,exitPriority} from './reclaim.mjs';
 const clone=v=>structuredClone(v);
 const valid=v=>Number.isFinite(v);
 export class StageDay extends Day {
@@ -12,6 +13,14 @@ export class StageDay extends Day {
     return this.menu.find(c=>c.expiration===this.data.expiration&&c.strike===strike&&c.right===this.meta.morning_side&&(c.listed_minute??0)<=minute)??null;
   }
   setupAt(setup,minute){
+    const signal=this.parentSetupAt(setup,minute);
+    if(setup.overlay==='entry_vwap_5m_2'&&signal.entry_minute!=null&&minute>=signal.entry_minute){
+      const veto=entryVeto(this.bars,this.meta.morning_side,signal.entry_minute,minute);
+      return {...signal,status:veto.veto?'veto':signal.status,entry_veto:veto};
+    }
+    return signal;
+  }
+  parentSetupAt(setup,minute){
     const e=setup.entry,anchor=e.anchor,width=e.window;
     const result=(status,known_at,entry_minute=null,extra={})=>({status,known_at,entry_minute,...extra});
     const triggered=(entry,alert,extra={})=>result(minute<entry?'alert':minute===entry?'ready':'missed',alert,entry,extra);
@@ -58,11 +67,12 @@ export class StageGame extends Game {
     const s=this.s,e=this.setup.entry,seen=this.day.setupAt(this.setup,s.minute);
     const times=[this.day.deadline,(Math.floor(s.minute/5)+1)*5];
     if(seen.entry_minute>s.minute)times.push(seen.entry_minute);
-    if(!['ready','missed','cash','gap'].includes(seen.status)&&e.kind!=='clock'){
+    if(!['ready','missed','cash','gap','veto'].includes(seen.status)&&e.kind!=='clock'){
       times.push(e.anchor);
       for(let end=e.anchor+e.window;end<=e.anchor+30;end+=e.window)times.push(end);
     }
     if(s.position)times.push(s.position.entry_minute+Math.max(1,this.setup.exit.grace));
+    const trend=this.trendExit();if(trend?.execution_minute>s.minute)times.push(trend.execution_minute);
     return Math.min(...times.filter(t=>t>s.minute));
   }
   buy(cid,qty,note=''){
@@ -74,6 +84,7 @@ export class StageGame extends Game {
     this.check('Entry within setup capital and contract limits',p.entry*qty*100<=this.setup.budget+.001&&qty<=this.setup.max_contracts);
     this.check('Entry quote met the setup premium and spread rule',q.ask>=.5&&(q.ask-q.bid)/((q.ask+q.bid)/2)<=.15+1e-10);
     this.check('One entry for this setup',this.s.entries<=this.setup.max_entries);
+    if(this.setup.overlay==='entry_vwap_5m_2')this.check('Respected the VWAP entry veto',signal.status!=='veto');
     const first=x.family==='full'||qty===1?qty:Math.min(qty-1,Math.max(1,Math.floor(qty*x.fraction+.5)));
     p.target_plan=[{percent:x.first,qty:first},...(qty>first?[{percent:x.second,qty:qty-first}]:[])];
   }
@@ -93,8 +104,12 @@ export class StageGame extends Game {
   }
   sell(qty,note='',forced=false){
     const p=this.s.position;if(!p)return super.sell(qty,note,forced);
+    const trend=this.trendExit();
     const flags=p.profit_flags;p.profit_flags=[];
     try{super.sell(qty,note,forced);}finally{p.profit_flags=flags;}
+    if(!forced&&!p.qty&&trend?.status==='due'&&trend.priority==='trend_exit'){
+      this.check('Closed on the scheduled VWAP exit',true);this.event('trend_exit','Closed the remaining contracts on the VWAP exit.');
+    }
     if(forced)return;
     const q=this.day.quote(p.id,this.s.minute);let remaining=qty;
     for(const f of flags){
@@ -113,26 +128,44 @@ export class StageGame extends Game {
   }
   observe_gate(){
     const now=this.day.setupAt(this.setup,this.s.minute);
-    if(['alert','ready','cash','gap'].includes(now.status)&&!this.s.events.some(e=>e.kind==='setup'&&e.status===now.status))this.event('setup',({alert:'Setup triggered; prepare for the announced entry.',ready:'Setup entry is now.',cash:'No setup trigger. Stay in cash.',gap:'Setup inputs are missing. No signal is invented.'})[now.status],{status:now.status});
+    if(['alert','ready','cash','gap','veto'].includes(now.status)&&!this.s.events.some(e=>e.kind==='setup'&&e.status===now.status))this.event('setup',({alert:'Setup triggered; prepare for the announced entry.',ready:'Setup entry is now.',cash:'No setup trigger. Stay in cash.',gap:'Setup inputs are missing. No signal is invented.',veto:'Two completed 5-minute own-VWAP conflicts. Entry vetoed for this day; stay in cash.'})[now.status],{status:now.status});
+    if(now.entry_veto?.available===false&&!this.s.events.some(e=>e.kind==='vwap_unavailable'))this.event('vwap_unavailable','VWAP entry check unavailable. Follow the original reclaim setup.');
+  }
+  trendExit(){
+    const p=this.s.position;if(!p||this.setup.overlay!=='exit_vwap_5m_2')return null;
+    const signal=exitSignal(this.day.bars,p.right,p.entry_minute,this.s.minute,this.day.deadline);
+    return {...signal,priority:signal.execution_minute!=null&&this.s.minute>=signal.execution_minute?exitPriority(p,this.day.quote(p.id,this.s.minute),this.s.minute,this.setup,this.day.deadline):null};
+  }
+  observe_trend(){
+    const t=this.trendExit(),p=this.s.position;
+    if(t?.status==='alert'&&!this.s.events.some(e=>e.kind==='trend_signal'&&e.entry_minute===p.entry_minute))this.event('trend_signal','Two fully post-entry 5-minute closes oppose the trade. Exit remaining contracts one minute later.',{entry_minute:p.entry_minute,execution_minute:t.execution_minute});
+  }
+  miss_trend(){
+    const t=this.trendExit();
+    if(t?.status==='due'&&t.priority==='trend_exit'){
+      this.check('Closed on the scheduled VWAP exit',false);this.event('trend_missed','Scheduled VWAP exit passed with contracts still open.');
+    }else if(t?.status==='due'&&t.priority==='missing_quote')this.event('unknown','No usable bid at the scheduled VWAP exit. No price is invented.');
   }
   advance(note=''){
-    this.miss_profit();this.event('wait',note||(this.s.position?'Held the position.':'Stayed flat.'));
-    this.s.minute=this.nextMinute();this.observe_gate();this.observe_stop();this.observe_profit();
+    this.miss_trend();this.miss_profit();this.event('wait',note||(this.s.position?'Held the position.':'Stayed flat.'));
+    this.s.minute=this.nextMinute();this.observe_gate();this.observe_stop();this.observe_profit();this.observe_trend();
     if(this.s.minute>=this.day.deadline)this.finish();
   }
   finish(){
-    while(this.s.minute<this.day.deadline){this.miss_profit();this.s.minute=this.nextMinute();this.observe_gate();this.observe_stop();this.observe_profit();}
+    while(this.s.minute<this.day.deadline){this.miss_trend();this.miss_profit();this.s.minute=this.nextMinute();this.observe_gate();this.observe_stop();this.observe_profit();this.observe_trend();}
     this.miss_profit();
     if(this.s.position){
       if(this.day.quote(this.s.position.id,this.s.minute))this.sell(this.s.position.qty,'Setup-close liquidation.',true);
       else{this.check('Position fully closed by setup close',false);this.event('unknown','Missing close price. Final P&L is unresolved.');}
     }
-    if(this.s.entries===0){const signal=this.day.setupAt(this.setup,this.s.minute);if(signal.status==='cash')this.check('Stayed in cash without an entry signal',true);else if(signal.status==='missed')this.check('Acted on the setup entry',false);}
+    if(this.s.entries===0){const signal=this.day.setupAt(this.setup,this.s.minute);if(['cash','veto'].includes(signal.status))this.check(signal.status==='veto'?'Respected the VWAP entry veto':'Stayed in cash without an entry signal',true);else if(signal.status==='missed')this.check('Acted on the setup entry',false);}
     this.s.finished=true;this.event('finish','Session complete.');
   }
   view(){
     const v=super.view(),minute=this.s.minute,signal=this.day.setupAt(this.setup,minute);
-    return {...v,engine_version:2,setup_id:this.setup.id,setup:clone(this.setup),setup_signal:signal,watchlist:{rank:this.day.meta.rank,score:this.day.meta.watch_score,side:this.day.meta.morning_side,name:this.day.meta.watchlist},
+    return {...v,engine_version:2,setup_id:this.setup.id,setup:clone(this.setup),setup_signal:signal,trend_exit:this.trendExit(),
+      ...(this.s.finished&&this.day.data.benchmarks?{benchmarks:clone(this.day.data.benchmarks.filter(b=>b.setup_id===this.setup.id||b.setup_id==='stock_reclaim'&&this.setup.overlay)),benchmark_note:'Saved historical study · automatic capped targets · sizing shown separately from your manual bid fills.'}:{}),
+      watchlist:{rank:this.day.meta.rank,score:this.day.meta.watch_score,side:this.day.meta.morning_side,name:this.day.meta.watchlist},
       deadline:this.day.deadline,next_minute:this.s.finished?null:this.nextMinute(),ema_fast:9,spot:this.day.spot(minute),screens:[],probability:null,probability_minute:null,forecasts:[],
       gate_passed:signal.status==='ready',gate_minute:signal.status==='ready'?minute:null,execution:'excellent_at_observed_bid_ask'};
   }

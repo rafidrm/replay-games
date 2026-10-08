@@ -87,14 +87,22 @@ function renderFocus(){
   }
   if(state.position&&state.profit_version){
     const p=state.position,profit=profitSetup(p),due=profit.due.length>0,missed=profit.missed.length>0;
+    const t=state.trend_exit;
+    if(t&&t.status!=='watching'&&t.priority!=='target'){
+      const label=t.priority==='stop'?'STOP':t.priority==='missing_quote'?'NO BID':t.status==='alert'?'GET READY':t.status==='due'?'EXIT NOW':'EXIT MISSED';
+      $('#entry-focus').classList.remove('ready');$('#entry-focus').classList.add(t.status==='missed'?'profit-missed':'profit-due');
+      $('#entry-focus').innerHTML=`<div class="focus-label">03 · VWAP EXIT</div><div class="focus-value"><strong>${time(t.execution_minute)}</strong><span class="focus-status wait">${label}</span></div><div class="focus-caption">${t.priority==='stop'?'Original premium stop takes priority.':t.priority==='missing_quote'?'No usable bid. Exit remains manual; no price is invented.':'2 × 5m own-VWAP conflicts · exit all remaining contracts.'}</div>`;return;
+    }
     $('#entry-focus').classList.toggle('ready',p.premium_return>0&&!due&&!missed);
     $('#entry-focus').classList.toggle('profit-due',due);$('#entry-focus').classList.toggle('profit-missed',!due&&missed);
     $('#entry-focus').innerHTML=`<div class="focus-label">03 · EXIT · ${direction}</div><div class="focus-value"><strong>${p.premium_return==null?'No quote':(p.premium_return>=0?'+':'')+num(p.premium_return*100,1)+'%'}</strong><span class="focus-status ${due||missed?'wait':'yes'}">${due?'TAKE PROFIT':missed?'TARGET MISSED':p.runner?'RUNNERS':'OPEN'}</span></div><div class="focus-caption">${due?profit.due.map(f=>'+'+f.percent+'%').join(' / ')+' reached · trim before advancing':missed?'Missed '+profit.missed.map(f=>'+'+f.percent+'%').join(' / ')+(profit.next==null?'':` · next +${profit.next}%`):(profit.next==null?'Planned targets reached':`Next +${profit.next}% · bid ${money(profit.nextBid)}`)}</div>`;
+    if(t?.status==='watching')$('#entry-focus .focus-caption').textContent+=` · VWAP conflicts ${t.consecutive}/2${t.missing?' · gaps reset count':''}`;
     return;
   }
   $('#entry-focus').classList.toggle('ready',setup.ready);
+  const vetoed=state.setup_signal?.status==='veto';$('#entry-focus').classList.toggle('profit-due',vetoed);
   const extra=!state.setup&&state.layers.vwap&&state.plan.entry==='discretionary'?chip('VWAP side',state.signals.vwap_side===direction)+chip('Retest',state.signals.retest===direction):'';
-  $('#entry-focus').innerHTML=`<div class="focus-label">03 · ENTRY · ${direction}</div><div class="focus-value"><strong>${setup.label}</strong><span class="focus-status ${setup.ready?'yes':'wait'}">${setup.ready?(!state.setup&&state.plan.entry==='discretionary'?'MANUAL':'READY'):'WAIT'}</span></div><div class="focus-chips">${setup.requirements.map(r=>chip(r.name,r.passed)).join('')}${extra}${!state.setup&&state.layers.ema&&state.plan.entry!=='retest_ema'?chip('EMA aligned',state.signals.ema===direction):''}</div>`;
+  $('#entry-focus').innerHTML=`<div class="focus-label">03 · ENTRY · ${direction}</div><div class="focus-value"><strong>${setup.label}</strong><span class="focus-status ${setup.ready?'yes':'wait'}">${vetoed?'SKIP DAY':setup.ready?(!state.setup&&state.plan.entry==='discretionary'?'MANUAL':'READY'):'WAIT'}</span></div><div class="focus-chips">${setup.requirements.map(r=>chip(r.name,r.passed)).join('')}${extra}${!state.setup&&state.layers.ema&&state.plan.entry!=='retest_ema'?chip('EMA aligned',state.signals.ema===direction):''}</div>`;
 }
 function renderContracts(keepExpiry=false){
   if(!state)return;
@@ -122,6 +130,7 @@ function renderQuote(){
   $('#cost-preview').innerHTML=q&&state.setup?`Premium <b class="${cost>state.setup.budget||qty>state.setup.max_contracts?'negative':''}">${money(cost)}</b> / ${money(state.setup.budget)} cap<br>Max ${state.setup.max_contracts} contracts · stop risk ${money(risk)}`:q?`Premium <b>${money(cost)}</b><br>Stop risk <b class="${risk>budget?'negative':''}">${money(risk)}</b> / ${money(budget)}`:'No current fill available.';
   $('#buy').disabled=state.finished||!!state.position||!q||!Number.isInteger(qty)||qty<1||qty>1000||cost>state.cash||qty>c.ask_available;
   $('#buy').textContent=q?`Buy ${Number.isInteger(qty)?qty:'…'} at ${money(q.ask)}`:'Buy at ask';
+  if(state.setup_signal?.status==='veto'&&q)$('#buy').textContent='Off-plan buy · entry vetoed';
 }
 function renderPosition(){
   const p=state.position;$('#entry-form').hidden=!!p;$('#position-form').hidden=!p;$('#position-tag').textContent=p?(p.runner?'RUNNERS':'OPEN'):'FLAT';$('#trade-heading').textContent=p?'Position':'Entry';
@@ -139,6 +148,8 @@ function renderPosition(){
   $('#position-name').textContent=`${state.symbol} ${num(p.strike)} ${p.right.toLowerCase()}`;
   $('#position-detail').innerHTML=[['Expiration',p.expiration],['Contracts remaining',`${p.qty} of ${p.initial_qty}`],['Entry ask',`${money(p.entry)} · ${time(p.entry_minute)}`],['Current bid',p.quote?money(p.quote.bid):'Unknown'],['Premium return',p.premium_return==null?'Unknown':num(100*p.premium_return,1)+'%'],['Booked on this position',money(p.realized)],[state.setup?'Execution':'Available bid size',state.setup?'Observed bid/ask':p.bid_available]].map(([a,b])=>`<div class="detail-row"><span>${a}</span><b>${b}</b></div>`).join('');
   $('#stop-alert').hidden=p.stop_alert==null;$('#stop-alert').textContent=`Stop alert at ${time(p.stop_alert||0)}. Your −${state.plan.stop}% premium rule was breached. This is a manual exit; the game will not protect the position for you.`;
+  const t=state.trend_exit;$('#trend-exit-alert').hidden=!t||t.status==='watching';
+  $('#trend-exit-alert').textContent=t&&t.status!=='watching'?`Own-VWAP exit ${time(t.execution_minute)} · ${t.priority==='target'?'original profit target takes priority':t.priority==='stop'?'original stop takes priority':t.priority==='missing_quote'?'no usable bid':t.status==='alert'?'prepare to sell all remaining contracts next minute':t.status==='due'?'sell all remaining contracts now':'exit time passed'}.`:'';
   $('#exit-all').disabled=state.finished||p.bid_available<p.qty;$('#exit-partial').disabled=state.finished||p.qty<2||p.bid_available<1;$('#sell-custom').disabled=state.finished||p.bid_available<1;
   $('#runners').max=Math.max(1,p.qty-1);$('#sell-quantity').max=p.qty;
 }
@@ -150,7 +161,7 @@ function renderDiscipline(){
   $('#checks').innerHTML=state.checks.slice(-6).map(c=>`<div class="check ${c.passed?'':'failed'}"><i>${c.passed?'✓':'!'}</i><span>${escape(c.name)} · ${time(c.minute)}</span></div>`).join('')||'';
 }
 function renderTape(){
-  const events=state.events.filter(e=>['buy','partial','close','note','stop_alert','unknown','gate','profit_target','profit_taken','profit_missed','setup'].includes(e.kind)).slice().reverse();
+  const events=state.events.filter(e=>['buy','partial','close','note','stop_alert','unknown','gate','profit_target','profit_taken','profit_missed','setup','vwap_unavailable','trend_signal','trend_exit','trend_missed'].includes(e.kind)).slice().reverse();
   $('#tape-summary').textContent=`Trades & notes · ${state.fills.length} fills`;
   $('#tape').innerHTML=events.map(e=>`<div class="tape-row"><time>${time(e.minute)}</time><span class="tape-kind">${escape(e.kind.replace('_',' '))}</span><div>${escape(e.note)}${e.price?`<small>${e.qty} × ${money(e.price)}${e.pnl!==undefined?' · '+money(e.pnl):''}</small>`:''}</div></div>`).join('')||'<p class="empty">No trades yet.</p>';
 }
@@ -159,7 +170,15 @@ function renderDebrief(){
   const passed=state.checks.filter(c=>c.passed).length;
   $('#debrief').innerHTML=`<span class="eyebrow">SESSION COMPLETE / ${escape(state.symbol)} / ${state.date}</span><h2>${state.total==null?'Unresolved exposure':'Day complete'}</h2><div class="debrief-metrics"><div><span>DAILY P&L</span><strong class="${state.total>0?'positive':state.total<0?'negative':''}">${money(state.total)}</strong></div><div><span>PLAN CHECKS</span><strong>${state.score==null?'Not scored':state.score+'%'}</strong></div><div><span>ENTRIES</span><strong>${state.entries}</strong></div></div><p>${state.checks.length?`${passed} of ${state.checks.length} applicable checks passed.`:'No entries means no applicable trade-discipline checks.'} ${state.total==null?`Known realized P&L: ${money(state.realized)}. Missing close liquidity is not counted as zero.`:''}</p><div>${state.checks.map(c=>`<div class="check ${c.passed?'':'failed'}"><i>${c.passed?'✓':'!'}</i><span>${time(c.minute)} · ${escape(c.name)}</span></div>`).join('')}</div><button id="another" class="primary">Next day →</button> <button id="replay-day" class="quiet">Replay this day ↻</button>`;
   $('#another').onclick=()=>{$('#game').hidden=true;$('#welcome').hidden=false;$('#mobile-dock').hidden=true;window.scrollTo({top:0,behavior:'smooth'})};
+  if(state.benchmarks?.length)$('#debrief').insertAdjacentHTML('beforeend',benchmarkReview());
   $('#replay-day').onclick=()=>task(async()=>{state=await api('/api/new',{previous:state.id,replay_of:state.id,setup_id:state.setup_id,layers:state.layers,plan:state.plan});localStorage.setItem(sessionKey,state.id);selected='';manualSelection='';render();window.scrollTo({top:0,behavior:'smooth'})});
+}
+
+function benchmarkReview(){
+  const rows=state.benchmarks,selected=rows.filter(r=>r.setup_id===state.setup_id),parent=rows.filter(r=>r.setup_id==='stock_reclaim'&&r.setup_id!==state.setup_id);
+  const row=r=>`<div class="benchmark-row"><span>${r.setup_id===state.setup_id?'This setup':'Original reclaim'} · ${r.profile==='lots2'?'exactly 2 contracts':'$2,000 / max 10'}<small>${r.eligible?`${r.n} contracts · ${time(r.entry_minute)} entry`:r.veto?'Vetoed · no trade':'No trade · '+escape(r.status)}</small></span><b>${money(r.pnl)}</b></div>`;
+  const detail=r=>`<div class="benchmark-path"><b>${r.profile==='lots2'?'Exactly 2 contracts':'$2,000 / max 10'}</b>${r.eligible?`<p>${r.n} × ${escape(r.strike)} ${escape(r.side)} · ${escape(r.expiration)}<br>${time(r.entry_minute)} BUY ${r.n} @ ${money(r.debit/(r.n*100))}</p>${r.events.map(e=>`<p>${time(e[0])} SELL ${e[1]} @ ${money(e[2])} · ${escape(e[3].replace('_',' '))}</p>`).join('')}`:`<p>${r.veto?'Entry vetoed. No buy or sale.':'Stayed in cash.'}</p>`}</div>`;
+  return `<section class="benchmark-review"><h3>Historical reference</h3><p class="small">${escape(state.benchmark_note)}</p>${[...selected,...parent].map(row).join('')}<details><summary>Reference fills</summary>${selected.map(detail).join('')}</details><p class="small muted">Selected after full-history comparison. No fresh out-of-sample claim.</p></section>`;
 }
 
 function drawModel(){
@@ -262,9 +281,10 @@ function renderStageCards(){
   const w=state.watchlist,s=state.setup_signal,e=state.setup.entry;
   $('#premarket-focus').classList.add('ready');
   $('#premarket-focus').innerHTML=`<div class="focus-label">01 · WATCHLIST</div><div class="focus-value"><strong>#${w.rank} / 3</strong><span>${escape(w.side)}</span></div><div class="focus-caption">${escape(w.name)} · score ${num(w.score*100,1)}%</div>`;
-  const status={scheduled:'SCHEDULED',waiting:'WAIT',watching:'WATCH',alert:'GET READY',ready:'ENTER',missed:'ENTRY PASSED',cash:'NO ENTRY',gap:'DATA GAP'}[s.status];
+  const status={scheduled:'SCHEDULED',waiting:'WAIT',watching:'WATCH',alert:'GET READY',ready:'ENTER',missed:'ENTRY PASSED',cash:'NO ENTRY',gap:'DATA GAP',veto:'VETOED'}[s.status];
   $('#trend-focus').classList.toggle('ready',['ready','alert'].includes(s.status));
   $('#trend-focus').innerHTML=`<div class="focus-label">02 · SETUP</div><div class="focus-value"><strong>${s.entry_minute!=null?time(s.entry_minute):e.kind==='clock'?time(e.anchor):status}</strong><span>${s.entry_minute!=null?status:''}</span></div><div class="focus-caption">${s.monitor?escape(s.monitor.strike+' '+s.monitor.right)+' · reference '+money(s.reference):s.reference!=null?'Reclaim '+money(s.reference):escape(state.setup.name)}</div>`;
+  if(s.entry_veto)$('#trend-focus .focus-caption').textContent=s.entry_veto.veto?'2 × 5m own-VWAP conflicts · no retry':s.entry_veto.available?'VWAP entry veto clear':'VWAP unavailable · parent rule';
 }
 $('#setup-select').onchange=renderSetupPlan;
 $('#pack-select').onchange=()=>task(async()=>{await api('/api/pack',{id:$('#pack-select').value});await loadHistory();toast('Replay pack selected for the next round.');});
