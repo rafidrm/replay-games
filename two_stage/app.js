@@ -1,3 +1,4 @@
+import {renderModelReadings} from './model-readings.mjs';
 import {localAPI,importPack,backupProgress,restoreProgress,lastSession,sessionKey} from './storage.mjs';
 import {entrySetup,profitSetup} from './signals.mjs';
 import {moneyness,nearStrikes,orderContracts} from './contracts.mjs';
@@ -62,7 +63,7 @@ function render(){
   $('[data-layer="model"]').closest('label').hidden=!!state.setup;
   $('#finish-description').textContent=state.setup?`Reveal the remaining candles and close at the ${time(state.deadline)} bid. Missing prices leave P&L unresolved.`:'Reveal the remaining candles and close at the 16:00 bid. Unavailable quotes or depth leave P&L unresolved.';
   chartData=null;chartRequest='';
-  renderPolicyCards();drawChart();drawModel();renderSignals();renderGates();renderFocus();renderContracts();renderPosition();renderDiscipline();renderTape();renderDebrief();renderWS(state,action);
+  renderPolicyCards();drawChart();drawModel();renderSignals();renderGates();renderFocus();renderContracts();renderPosition();renderDiscipline();renderTape();renderDebrief();renderWS(state,action);renderModelReadings(state);
   if(state.ws){$('#dock-trade').textContent=state.finished?'Review':state.position?'Orders':'Entry';if(!state.finished&&state.minute>=state.deadline)$('#dock-next-label').textContent='Close day';}
   $('#save-note').disabled=state.finished;$('#decision-note').disabled=state.finished;
 }
@@ -333,7 +334,7 @@ $('#library-button').onclick=()=>$('#library-dialog').showModal();
 $('#close-library').onclick=()=>$('#library-dialog').close();
 $('#welcome-import').onclick=()=>$('#library-dialog').showModal();
 $('#pack-file').onchange=()=>{const file=$('#pack-file').files[0];if(!file)return;task(async()=>{
-  try{const pack=await importPack(file,(n,total)=>{$('#import-status').textContent=`Importing ${n} / ${total} days…`});await loadHistory();$('#import-status').textContent=`${pack.cases.length} days ready. You can play.`;toast('Replay pack saved on this device.');}
+  try{const pack=await importPack(file,(n,total)=>{$('#import-status').textContent=`Importing ${n} / ${total} days…`});await loadHistory();if(state){state=await api('/api/state?id='+state.id);render();}$('#import-status').textContent=`${pack.cases.length} days ready. You can play.`;toast('Replay pack saved on this device.');}
   catch(error){$('#import-status').textContent=error.message;throw error;}finally{$('#pack-file').value='';}
 });};
 $('#backup-progress').onclick=()=>task(async()=>downloadJSON(await backupProgress(),'two-stage-progress-'+new Date().toISOString().slice(0,10)+'.json'));

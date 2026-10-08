@@ -1,3 +1,4 @@
+import {modelReadings} from './model-readings.mjs';
 import {Game,DEFAULT_LAYERS} from './engine.mjs';
 import {exitSignal} from './reclaim.mjs';
 import {entryGate,automaticReference} from './ws-replay.mjs';
@@ -126,7 +127,7 @@ export class WealthsimpleGame extends Game {
       else if(selected&&c.can_buy){status='ready';label=s.minute<c.practice_entry?'Delay practice':s.minute===c.practice_entry?'Buy now':'Late entry';detail=`${s.ws.quantity} contracts · practice ${time(c.practice_entry)} · ${s.minute-c.planned}m after planned buy`;}
       return {id:setup.id,name:setup.name,selected,status,label,detail};
     });
-    return {...v,engine_version:2,ws,setup_id:this.setup.id,setup:clone(this.setup),setup_signal:c.signal,policy_cards:cards,trend_exit:null,stop_rule:null,watchlist:{rank:this.day.meta.rank,side:this.day.meta.morning_side,name:this.day.meta.watchlist},screens:[],forecasts:[],deadline:this.day.deadline,next_minute:s.finished||s.minute===this.day.deadline?null:this.nextMinute(),ema_fast:9,spot:this.day.spot(s.minute),unrealized,total:unrealized==null?null:s.realized+unrealized,
+    return {...v,model_readings:modelReadings(this.day,s.minute,this.setup),engine_version:2,ws,setup_id:this.setup.id,setup:clone(this.setup),setup_signal:c.signal,policy_cards:cards,trend_exit:null,stop_rule:null,watchlist:{rank:this.day.meta.rank,side:this.day.meta.morning_side,name:this.day.meta.watchlist},screens:[],forecasts:[],deadline:this.day.deadline,next_minute:s.finished||s.minute===this.day.deadline?null:this.nextMinute(),ema_fast:9,spot:this.day.spot(s.minute),unrealized,total:unrealized==null?null:s.realized+unrealized,
       ...(s.finished?{ws_reference:automaticReference(this.day,this.setup,s.ws.quantity,s.ws.actual_delay??s.ws.delay)}:{})};
   }
   summary(){return {...super.summary(),engine_version:2,setup_id:this.setup.id,setup_name:this.setup.name+` · ${this.s.ws.quantity} contracts · +${this.s.ws.delay}m`,ws_version:1};}

@@ -1,3 +1,4 @@
+import {validateModelReadings} from './model-readings.mjs';
 import {WS_RULES} from './ws-orders.mjs';
 import {validateWSSetup,validateWSReferences,validateWSState} from './ws-validate.mjs';
 export const digest=async text=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -142,6 +143,7 @@ function validateStageDay(d){
     if(!Array.isArray(q)||q.length!==6||!Number.isInteger(q[0])||q[0]<0||q[0]>=d.menu.length||!Number.isInteger(q[1])||q[1]<0||q[1]>h||q.slice(2).some(v=>!optional(v)||v<0))fail('invalid quote.');
     const key=q[0]*400+q[1];if(seen.has(key))fail('duplicate quote.');seen.add(key);
   }
+  validateModelReadings(d,fail);
   if(d.ws_references!=null)validateWSReferences(d.ws_references,d,fail);
   if(d.benchmarks!=null)validateBenchmarks(d.benchmarks,h);
   if(d.policy_signals!=null){validatePolicySignals(d.policy_signals,m);validateBenchmarks(d.policy_benchmarks,h,true);}

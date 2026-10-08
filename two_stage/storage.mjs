@@ -32,7 +32,9 @@ async function dayFor(record){
   const key=record.pack_id+':'+record.day_key;
   if(!dayCache.has(key)){
     const row=await read('days',key);if(!row)throw Error('Import the original replay pack to resume this round.');
-    const pack=await read('packs',record.pack_id);dayCache.clear();dayCache.set(key,createDay(row.data,pack.manifest));
+    const pack=await read('packs',record.pack_id),day=createDay(row.data,pack.manifest);
+    if(day.data?.ws_references&&!day.data.model_readings){const supplement=await read('settings','model-readings:'+await digest(JSON.stringify(row.data)));day.modelReadings=supplement?.value??null;}
+    dayCache.clear();dayCache.set(key,day);
   }
   return dayCache.get(key);
 }
@@ -73,18 +75,20 @@ export async function localAPI(path,params){
 async function withImportLock(fn){return navigator.locks?navigator.locks.request('two-stage-import:'+scope,fn):fn();}
 export async function importPack(file,progress=()=>{}){
   return withImportLock(async()=>{
-    let manifest,index=0;const received=new Set();
+    let manifest,index=0;const received=new Set(),modelSupplements=[];
     for await(const line of packLines(file)){
       if(!manifest){manifest=await validateManifest(JSON.parse(line));progress(0,manifest.records.length);continue;}
       const expected=manifest.records[index];if(!expected||await digest(line)!==expected.sha256)throw Error('Replay checksum mismatch. Import was stopped; your previous library is unchanged.');
       const day=validateDay(JSON.parse(line));if((day.format_version===2)!==(manifest.version===2))throw Error('Replay version mismatch.');if(day.key!==expected.key||received.has(day.key))throw Error('Replay record identity mismatch.');
       if(Boolean(day.policy_signals)!==Boolean(manifest.setups?.some(s=>s.entry.kind==='union'||s.execution==='wealthsimple')))throw Error('Replay policy inputs do not match the setup roster.');
       if(Boolean(day.ws_references)!==Boolean(manifest.setups?.some(s=>s.execution==='wealthsimple')))throw Error('Wealthsimple inputs do not match the setup roster.');
+      if(day.model_readings){const {model_readings,...base}=day;modelSupplements.push({id:'model-readings:'+await digest(JSON.stringify(base)),value:model_readings});}
       await put('days',{id:manifest.id+':'+day.key,data:day});received.add(day.key);index++;progress(index,manifest.records.length);
     }
     if(!manifest||index!==manifest.records.length)throw Error('Incomplete replay pack. Your previous library is unchanged.');
     const db=await database;
-    await new Promise((resolve,reject)=>{const tx=db.transaction(['packs','settings'],'readwrite');tx.objectStore('packs').put({id:manifest.id,manifest});tx.objectStore('settings').put({id:'active-pack',value:manifest.id});tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
+    await new Promise((resolve,reject)=>{const tx=db.transaction(['packs','settings'],'readwrite');tx.objectStore('packs').put({id:manifest.id,manifest});tx.objectStore('settings').put({id:'active-pack',value:manifest.id});for(const supplement of modelSupplements)tx.objectStore('settings').put(supplement);tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
+    dayCache.clear();
     // The browser may decline; backups remain the durable recovery path.
     if(navigator.storage?.persist)await navigator.storage.persist().catch(()=>false);
     return manifest;
