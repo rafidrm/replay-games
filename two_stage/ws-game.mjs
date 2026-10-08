@@ -91,7 +91,7 @@ export class WealthsimpleGame extends Game {
     if(group==null&&qty!==p.qty)throw Error('Select an order group for a partial exit.');
     const groups=group==null?b.groups.filter(g=>g.qty):b.groups.filter(g=>g.id===group&&g.qty);if(group!=null&&(!groups.length||qty>groups[0].qty))throw Error('Quantity exceeds the selected group.');
     let left=qty;for(const g of groups){const amount=Math.min(g.qty,left);sellGroup(b,g,amount,q.bid,s.minute,forced?'deadline':'manual');left-=amount;if(!left)break;}
-    this.syncBook();if(!forced)this.check('Manual exit recorded separately from standing orders',true);
+    this.syncBook();if(!forced)this.check('Left preset exits working until the 15:00 close',s.minute===this.day.deadline);
   }
   finish(){
     while(this.s.minute<this.day.deadline&&this.s.ws.book?.gap==null)this.advance();
@@ -108,7 +108,7 @@ export class WealthsimpleGame extends Game {
       const placements=b.events.slice(before);this.check('Initial orders placed on schedule',placements.every(e=>b.groups.find(g=>g.id===e.group).activation===s.minute));this.observeOrders();
     }else if(a.action==='ws_replace'){
       this.check('Replacement submitted when requested',b.cue?.minute===s.minute);queueReplacement(b,s.minute);this.syncBook();
-    }else if(a.action==='ws_cancel'){cancelGroup(b,a.group,s.minute);this.syncBook();}
+    }else if(a.action==='ws_cancel'){cancelGroup(b,a.group,s.minute);this.check('Kept standing preset orders in place',false);this.syncBook();}
     else if(a.action==='ws_sell')this.sell(a.qty,'',false,a.group);
     else throw Error('Unknown order action.');
   }
@@ -119,7 +119,7 @@ export class WealthsimpleGame extends Game {
     const cards=this.day.setups.map(setup=>{
       const sig=this.day.setupAt(setup,s.minute),selected=setup.id===this.setup.id;
       let status=sig.status,label={alert:'Entry queued',ready:'Planned buy now',missed:'Entry passed',cash:'No entry',veto:'Vetoed · skip',waiting:'Waiting'}[status]??status;
-      let detail=sig.origin?`Forecast ${time(sig.alert_minute)} · planned ${sig.entry_minute==null?'vetoed':time(sig.entry_minute)}`:'Waiting for a qualifying alert';
+      let detail=sig.origin?`Forecast ${time(sig.alert_minute)} · planned ${sig.entry_minute==null?'vetoed':time(sig.entry_minute)}`:status==='cash'?'No qualifying alert in the entry window':'Waiting for a qualifying alert';
       if(setup.ws_code==='P09'&&sig.origin)detail+=sig.vwap_checked?(sig.status==='veto'?' · opposing VWAP event':' · entry veto clear'):' · VWAP check '+time(sig.cutoff);
       if(selected&&s.position){status=b.gap!=null?'gap':b.cue?'alert':'position';label=b.gap!=null?'Data gap':b.cue?'Replace orders':ws.deadline_due?'Close now':'Managing orders';detail=ruleDescription(this.rule);}
       else if(selected&&s.entries){label='Position closed';detail='Continue observing or finish the day.';}
