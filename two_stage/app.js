@@ -355,12 +355,18 @@ if('serviceWorker' in navigator){
 }
 
 function targetText(setup){const x=setup.exit;return x.family==='full'?`All at +${x.first}%`:`${Math.round(x.fraction*100)}% at +${x.first}% → rest at +${x.second}%`;}
+function packLabel(pack){
+  if(pack.name.startsWith('Stage 2 · retained reclaim variants'))return 'Stock reclaim · both VWAP variants · Aug–Sep 2026';
+  return pack.name+((pack.name.startsWith('Four setups')||pack.name.startsWith('Wealthsimple'))?'':' · legacy / reference');
+}
+function setupLabel(setup){return setup.id==='stock_reclaim_exit_vwap_5m_2'?'Stock reclaim · slow VWAP exit':setup.name;}
 function renderLibrary(){
   const old=$('#setup-select').value,pack=library.pack,modern=pack?.version===2;
-  $('#pack-control').hidden=library.packs.length<2;
-  $('#pack-select').innerHTML=library.packs.map(p=>`<option value="${p.id}">${escape(p.name)}${(p.name.startsWith('Four setups')||p.name.startsWith('Wealthsimple'))?'':' · legacy / reference'}</option>`).join('');$('#pack-select').value=pack?.id||'';
+  const options=library.packs.map(p=>`<option value="${p.id}">${escape(packLabel(p))}</option>`).join('');
+  $('#pack-control').hidden=library.packs.length<2;$('#start-pack-control').hidden=!library.packs.length;
+  for(const id of ['#pack-select','#start-pack-select']){$(id).innerHTML=options;$(id).value=pack?.id||'';}
   $('#setup-control').hidden=!modern;$('#setup-brief').hidden=!modern;$('#legacy-entry').hidden=modern;$('#legacy-risk').hidden=modern;
-  $('#setup-select').innerHTML=modern?pack.setups.map(s=>`<option value="${s.id}">${escape(s.name)}</option>`).join(''):'';
+  $('#setup-select').innerHTML=modern?pack.setups.map(s=>`<option value="${s.id}">${escape(setupLabel(s))}</option>`).join(''):'';
   if(modern)$('#setup-select').value=pack.setups.some(s=>s.id===old)?old:pack.default_setup;
   $('#start-preset option[value="full"]').textContent=modern?'VWAP + EMA':'VWAP + EMA + logistic';renderSetupPlan();
 }
@@ -392,4 +398,4 @@ function renderStageCards(){
 }
 $('#ws-quantity').onchange=renderSetupPlan;
 $('#setup-select').onchange=renderSetupPlan;
-$('#pack-select').onchange=()=>task(async()=>{await api('/api/pack',{id:$('#pack-select').value});await loadHistory();toast('Replay pack selected for the next round.');});
+for(const id of ['#pack-select','#start-pack-select'])$(id).onchange=()=>task(async()=>{await api('/api/pack',{id:$(id).value});await loadHistory();toast('Replay pack selected for the next round.');});
